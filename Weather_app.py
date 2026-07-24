@@ -354,7 +354,7 @@ if search_query:
 
                         df_map = pd.DataFrame(map_data)
                         st.pydeck_chart(pdk.Deck(
-                            map_style='mapbox://styles/mapbox/dark-v10',
+                            map_style='dark', # UPDATED TO OPEN-SOURCE CARTO
                             initial_view_state=pdk.ViewState(latitude=lat, longitude=lon, zoom=7.5, pitch=0),
                             layers=[
                                 pdk.Layer('ScatterplotLayer', data=df_map, get_position='[lon, lat]', get_color='burn_color', get_radius=5000),
@@ -422,18 +422,18 @@ if search_query:
             sun_az, sun_alt = get_celestial_az_alt(lat, lon, tracking_time, tz, "sun")
             moon_az, moon_alt = get_celestial_az_alt(lat, lon, tracking_time, tz, "moon")
             
-            # Determine Adjusted Dynamic Background Map Style
+            # Determine Adjusted Dynamic Background Map Style (Carto Engine)
             if sun_alt > 0:
-                bg_style = 'mapbox://styles/mapbox/light-v10'
+                bg_style = 'light'
                 sky_status = "☀️ Daytime (Light Map)"
             elif sun_alt > -6:
-                bg_style = 'mapbox://styles/mapbox/satellite-v9'
+                bg_style = 'dark'
                 sky_status = "🌇 Civil Twilight (Golden/Blue Hour)"
             elif sun_alt > -12:
-                bg_style = 'mapbox://styles/mapbox/satellite-v9'
+                bg_style = 'dark'
                 sky_status = "🌆 Nautical Twilight (Stars Emerging)"
             else:
-                bg_style = 'mapbox://styles/mapbox/dark-v10'
+                bg_style = 'dark'
                 sky_status = "🌌 True Night (Dark Map)"
 
             st.write(f"**Target Time:** {tracking_time.strftime('%A, %I:%M %p')}")
