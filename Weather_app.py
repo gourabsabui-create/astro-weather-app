@@ -420,10 +420,10 @@ if search_query:
                                 
                                 grid_pm25 = safe_val(loc_aq, "pm2_5", aq_idx) if loc_aq else 0
                                 
-                                # --- SMOKE GRADIENT FIX (SPATIAL DECAY) ---
+                                # --- SMOKE GRADIENT FIX (SPATIAL DECAY BUG FIXED) ---
                                 if is_override: 
                                     dist_deg = math.sqrt((c[0] - lat)**2 + (c[1] - lon)**2)
-                                    decay_factor = max(0.3, 1.0 - (dist_deg / max_dist)) 
+                                    decay_factor = max(0.3, 1.0 - (dist_deg / max_decay_dist)) 
                                     grid_pm25 = max(grid_pm25, active_pm25 * decay_factor)
 
                                 l_low = safe_val(loc_w, "cloud_cover_low", idx)
@@ -436,7 +436,6 @@ if search_query:
                                 
                                 inv_dt_grid, inv_alt_grid = estimate_inversion_height(loc_w, idx)
                                 
-                                # --- FOG GRADIENT FIX (DYNAMIC WEIGHTING) ---
                                 fog_intensity = min(100, inv_dt_grid * 20) if inv_dt_grid > 0 else 0
                                 
                                 if inv_dt_grid > 0:
@@ -462,103 +461,107 @@ if search_query:
                         df_map = pd.DataFrame(map_data)
                         layers = []
 
-                        if show_burn and not df_map[df_map['potential'] > 0].empty:
+                        # --- SAFETY CHECK ADDED HERE ---
+                        if not df_map.empty:
+                            if show_burn and not df_map[df_map['potential'] > 0].empty:
+                                layers.append(pdk.Layer(
+                                    'HeatmapLayer',
+                                    data=df_map[df_map['potential'] > 0],
+                                    get_position='[lon, lat]',
+                                    get_weight='potential',
+                                    opacity=0.6,
+                                    radiusPixels=heat_radius,
+                                    colorRange=[[255, 237, 160], [254, 178, 76], [253, 141, 60], [240, 59, 32], [189, 0, 38]]
+                                ))
+                                
+                            if show_skunk and not df_map[df_map['skunk'] > 0].empty:
+                                layers.append(pdk.Layer(
+                                    'HeatmapLayer',
+                                    data=df_map[df_map['skunk'] > 0],
+                                    get_position='[lon, lat]',
+                                    get_weight='skunk',
+                                    opacity=0.6,
+                                    radiusPixels=heat_radius,
+                                    colorRange=[[242, 240, 247], [203, 201, 226], [158, 154, 200], [117, 107, 177], [84, 39, 143]] 
+                                ))
+
+                            if show_smoke and not df_map[df_map['pm25'] > 0].empty:
+                                layers.append(pdk.Layer(
+                                    'HeatmapLayer',
+                                    data=df_map[df_map['pm25'] > 0],
+                                    get_position='[lon, lat]',
+                                    get_weight='pm25',
+                                    opacity=0.6,
+                                    radiusPixels=heat_radius,
+                                    colorRange=[[246, 232, 195], [223, 194, 125], [191, 129, 45], [140, 81, 10], [84, 48, 5]]
+                                ))
+
+                            if show_fog and not df_map[df_map['fog_weight'] > 0].empty:
+                                layers.append(pdk.Layer(
+                                    'HeatmapLayer',
+                                    data=df_map[df_map['fog_weight'] > 0],
+                                    get_position='[lon, lat]',
+                                    get_weight='fog_weight',
+                                    opacity=0.6,
+                                    radiusPixels=heat_radius,
+                                    colorRange=[[237, 248, 251], [178, 226, 226], [102, 194, 164], [44, 162, 95], [0, 109, 44]] 
+                                ))
+
+                            pad_lat = step / 2
+                            pad_lon = step / 2
+                            min_lon, max_lon = min(lons), max(lons)
+                            min_lat, max_lat = min(lats), max(lats)
+
+                            mask_data = [{
+                                "polygon": [
+                                    [[-180, 90], [180, 90], [180, -90], [-180, -90]], 
+                                    [
+                                        [min_lon - pad_lon, min_lat - pad_lat],
+                                        [max_lon + pad_lon, min_lat - pad_lat],
+                                        [max_lon + pad_lon, max_lat + pad_lat],
+                                        [min_lon - pad_lon, max_lat + pad_lat]
+                                    ] 
+                                ]
+                            }]
+
                             layers.append(pdk.Layer(
-                                'HeatmapLayer',
-                                data=df_map[df_map['potential'] > 0],
-                                get_position='[lon, lat]',
-                                get_weight='potential',
-                                opacity=0.6,
-                                radiusPixels=heat_radius,
-                                colorRange=[[255, 237, 160], [254, 178, 76], [253, 141, 60], [240, 59, 32], [189, 0, 38]]
+                                'PolygonLayer',
+                                data=mask_data,
+                                get_polygon='polygon',
+                                get_fill_color=[22, 25, 28, 230], 
+                                filled=True,
+                                stroked=True,
+                                get_line_color=[150, 150, 150, 150], 
+                                line_width_min_pixels=2,
+                                pickable=False
                             ))
-                            
-                        if show_skunk and not df_map[df_map['skunk'] > 0].empty:
+
                             layers.append(pdk.Layer(
-                                'HeatmapLayer',
-                                data=df_map[df_map['skunk'] > 0],
+                                'ScatterplotLayer',
+                                data=df_map,
                                 get_position='[lon, lat]',
-                                get_weight='skunk',
-                                opacity=0.6,
-                                radiusPixels=heat_radius,
-                                colorRange=[[242, 240, 247], [203, 201, 226], [158, 154, 200], [117, 107, 177], [84, 39, 143]] 
+                                get_color=[0, 0, 0, 0], 
+                                get_radius=5000 * r_mult,
+                                pickable=True
                             ))
 
-                        if show_smoke and not df_map[df_map['pm25'] > 0].empty:
-                            layers.append(pdk.Layer(
-                                'HeatmapLayer',
-                                data=df_map[df_map['pm25'] > 0],
-                                get_position='[lon, lat]',
-                                get_weight='pm25',
-                                opacity=0.6,
-                                radiusPixels=heat_radius,
-                                colorRange=[[246, 232, 195], [223, 194, 125], [191, 129, 45], [140, 81, 10], [84, 48, 5]]
+                            tooltip_html = (
+                                "<b>Coord:</b> {lat}, {lon}<br/>"
+                                "<b>🔥 Burn:</b> {potential}/100 | <b>🦨 Skunk:</b> {skunk}%<br/>"
+                                "<b>🌲 Smoke:</b> {pm25} µg/m³<br/>"
+                                "<b>☁️ Clouds:</b> {cloud_low}% L | {cloud_mid}% M | {cloud_high}% H<br/>"
+                                "<b>🌫️ Fog Ceiling:</b> {fog_text}"
+                            )
+
+                            st.pydeck_chart(pdk.Deck(
+                                map_style='dark',
+                                views=[pdk.View(type="MapView", controller=is_interactive)],
+                                initial_view_state=v_state,
+                                layers=layers,
+                                tooltip={"html": tooltip_html, "style": {"backgroundColor": "#222222", "color": "white"}}
                             ))
-
-                        if show_fog and not df_map[df_map['fog_weight'] > 0].empty:
-                            layers.append(pdk.Layer(
-                                'HeatmapLayer',
-                                data=df_map[df_map['fog_weight'] > 0],
-                                get_position='[lon, lat]',
-                                get_weight='fog_weight',
-                                opacity=0.6,
-                                radiusPixels=heat_radius,
-                                colorRange=[[237, 248, 251], [178, 226, 226], [102, 194, 164], [44, 162, 95], [0, 109, 44]] 
-                            ))
-
-                        pad_lat = step / 2
-                        pad_lon = step / 2
-                        min_lon, max_lon = min(lons), max(lons)
-                        min_lat, max_lat = min(lats), max(lats)
-
-                        mask_data = [{
-                            "polygon": [
-                                [[-180, 90], [180, 90], [180, -90], [-180, -90]], 
-                                [
-                                    [min_lon - pad_lon, min_lat - pad_lat],
-                                    [max_lon + pad_lon, min_lat - pad_lat],
-                                    [max_lon + pad_lon, max_lat + pad_lat],
-                                    [min_lon - pad_lon, max_lat + pad_lat]
-                                ] 
-                            ]
-                        }]
-
-                        layers.append(pdk.Layer(
-                            'PolygonLayer',
-                            data=mask_data,
-                            get_polygon='polygon',
-                            get_fill_color=[22, 25, 28, 230], 
-                            filled=True,
-                            stroked=True,
-                            get_line_color=[150, 150, 150, 150], 
-                            line_width_min_pixels=2,
-                            pickable=False
-                        ))
-
-                        layers.append(pdk.Layer(
-                            'ScatterplotLayer',
-                            data=df_map,
-                            get_position='[lon, lat]',
-                            get_color=[0, 0, 0, 0], 
-                            get_radius=5000 * r_mult,
-                            pickable=True
-                        ))
-
-                        tooltip_html = (
-                            "<b>Coord:</b> {lat}, {lon}<br/>"
-                            "<b>🔥 Burn:</b> {potential}/100 | <b>🦨 Skunk:</b> {skunk}%<br/>"
-                            "<b>🌲 Smoke:</b> {pm25} µg/m³<br/>"
-                            "<b>☁️ Clouds:</b> {cloud_low}% L | {cloud_mid}% M | {cloud_high}% H<br/>"
-                            "<b>🌫️ Fog Ceiling:</b> {fog_text}"
-                        )
-
-                        st.pydeck_chart(pdk.Deck(
-                            map_style='dark',
-                            views=[pdk.View(type="MapView", controller=is_interactive)],
-                            initial_view_state=v_state,
-                            layers=layers,
-                            tooltip={"html": tooltip_html, "style": {"backgroundColor": "#222222", "color": "white"}}
-                        ))
+                        else:
+                            st.error("No valid map data could be rendered. The API might be offline for this specific region.")
 
 
         # ==========================================
