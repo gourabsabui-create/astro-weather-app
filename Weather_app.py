@@ -747,240 +747,239 @@ if lat is not None and lon is not None and tz is not None:
             """
             components.html(windy_html, height=500)
 
+    # ==========================================
+    # MODE 2: ASTROPHOTOGRAPHY
+    # ==========================================
+    elif mode == "🌌 Astrophotography":
+        st.write("### 🕒 Astro Planning Window")
+        
+        selected_date = st.date_input("Target Date:", datetime.today().date())
 
-        # ==========================================
-        # MODE 2: ASTROPHOTOGRAPHY
-        # ==========================================
-        elif mode == "🌌 Astrophotography":
-            st.write("### 🕒 Astro Planning Window")
+        # --- CELESTIAL DAILY MILESTONES ---
+        st.subheader("⏱️ Daily Celestial Events")
+        with st.spinner("Calculating exact horizon crossings..."):
+            events = calculate_celestial_events(lat, lon, selected_date.isoformat(), real_tz)
             
-            selected_date = st.date_input("Target Date:", datetime.today().date())
+        e1, e2, e3, e4 = st.columns(4)
+        e1.markdown(f"**Sunrise:** {events.get('Sunrise', 'N/A').strftime('%I:%M %p') if 'Sunrise' in events else 'N/A'}")
+        e1.markdown(f"**Sunset:** {events.get('Sunset', 'N/A').strftime('%I:%M %p') if 'Sunset' in events else 'N/A'}")
+        
+        e2.markdown(f"**Dawn (Civil):** {events.get('Dawn (Civil)', 'N/A').strftime('%I:%M %p') if 'Dawn (Civil)' in events else 'N/A'}")
+        e2.markdown(f"**Dusk (Civil):** {events.get('Dusk (Civil)', 'N/A').strftime('%I:%M %p') if 'Dusk (Civil)' in events else 'N/A'}")
+        
+        e3.markdown(f"**Dawn (Nautical):** {events.get('Dawn (Nautical)', 'N/A').strftime('%I:%M %p') if 'Dawn (Nautical)' in events else 'N/A'}")
+        e3.markdown(f"**Dusk (Nautical):** {events.get('Dusk (Nautical)', 'N/A').strftime('%I:%M %p') if 'Dusk (Nautical)' in events else 'N/A'}")
+        
+        e4.markdown(f"**Moonrise:** {events.get('Moonrise', 'N/A').strftime('%I:%M %p') if 'Moonrise' in events else 'N/A'}")
+        e4.markdown(f"**Moonset:** {events.get('Moonset', 'N/A').strftime('%I:%M %p') if 'Moonset' in events else 'N/A'}")
 
-            # --- CELESTIAL DAILY MILESTONES ---
-            st.subheader("⏱️ Daily Celestial Events")
-            with st.spinner("Calculating exact horizon crossings..."):
-                events = calculate_celestial_events(lat, lon, selected_date.isoformat(), real_tz)
-                
-            e1, e2, e3, e4 = st.columns(4)
-            e1.markdown(f"**Sunrise:** {events.get('Sunrise', 'N/A').strftime('%I:%M %p') if 'Sunrise' in events else 'N/A'}")
-            e1.markdown(f"**Sunset:** {events.get('Sunset', 'N/A').strftime('%I:%M %p') if 'Sunset' in events else 'N/A'}")
+        st.divider()
+        
+        st.write("### 🔭 Advanced Celestial Tracking Map")
+        
+        interactive_astro = st.radio("Do you want an interactive map?", ["Yes (Zoom & Pan)", "No (Static Map)"], horizontal=True, key="astro_toggle")
+        is_astro_interactive = (interactive_astro == "Yes (Zoom & Pan)")
+        
+        # --- EXACT TIME SLIDER LOGIC MOVED DIRECTLY ABOVE THE MAP ---
+        start_of_day = datetime.combine(selected_date, time(0, 0))
+        end_of_day = datetime.combine(selected_date, time(23, 59))
+        
+        if selected_date == datetime.today().date():
+            default_time = datetime.now().replace(second=0, microsecond=0)
+        else:
+            default_time = datetime.combine(selected_date, time(12, 0))
             
-            e2.markdown(f"**Dawn (Civil):** {events.get('Dawn (Civil)', 'N/A').strftime('%I:%M %p') if 'Dawn (Civil)' in events else 'N/A'}")
-            e2.markdown(f"**Dusk (Civil):** {events.get('Dusk (Civil)', 'N/A').strftime('%I:%M %p') if 'Dusk (Civil)' in events else 'N/A'}")
-            
-            e3.markdown(f"**Dawn (Nautical):** {events.get('Dawn (Nautical)', 'N/A').strftime('%I:%M %p') if 'Dawn (Nautical)' in events else 'N/A'}")
-            e3.markdown(f"**Dusk (Nautical):** {events.get('Dusk (Nautical)', 'N/A').strftime('%I:%M %p') if 'Dusk (Nautical)' in events else 'N/A'}")
-            
-            e4.markdown(f"**Moonrise:** {events.get('Moonrise', 'N/A').strftime('%I:%M %p') if 'Moonrise' in events else 'N/A'}")
-            e4.markdown(f"**Moonset:** {events.get('Moonset', 'N/A').strftime('%I:%M %p') if 'Moonset' in events else 'N/A'}")
+        tracking_time = st.slider(
+            "Select Exact Time (Local):",
+            min_value=start_of_day,
+            max_value=end_of_day,
+            value=default_time,
+            step=timedelta(minutes=1),
+            format="hh:mm A"
+        )
+        
+        gc_az, gc_alt = get_celestial_az_alt(lat, lon, tracking_time, real_tz, "galactic_core")
+        sun_az, sun_alt = get_celestial_az_alt(lat, lon, tracking_time, real_tz, "sun")
+        moon_az, moon_alt = get_celestial_az_alt(lat, lon, tracking_time, real_tz, "moon")
+        
+        # --- DYNAMIC PHOTOPILLS COLOR WASH OVERLAY ---
+        if sun_alt > 6: 
+            wash_color = [255, 240, 200, 25]  
+            sky_status = "☀️ Daytime (Yellow)"
+        elif sun_alt > 0: 
+            wash_color = [255, 140, 0, 45]   
+            sky_status = "🌇 Golden Hour (Orange)"
+        elif sun_alt > -6: 
+            wash_color = [100, 150, 255, 50] 
+            sky_status = "🌆 Blue Hour / Civil Twilight"
+        elif sun_alt > -12: 
+            wash_color = [20, 50, 150, 80]  
+            sky_status = "🌌 Nautical Twilight"
+        elif sun_alt > -18:
+            wash_color = [0, 10, 50, 100]
+            sky_status = "🌌 Astronomical Twilight"
+        else: 
+            wash_color = [0, 0, 20, 140]     
+            sky_status = "🌃 True Night"
 
-            st.divider()
+        st.write(f"**Target Time:** {tracking_time.strftime('%A, %I:%M %p')}")
+        c_a, c_b, c_c = st.columns(3)
+        c_a.markdown(f"**Milky Way:** Alt {round(gc_alt)}°")
+        c_b.markdown(f"**Sun:** Alt {round(sun_alt)}°")
+        c_c.markdown(f"**Map State:** {sky_status}")
+        
+        if gc_alt > 7: base_color, strength_multiplier = [255, 215, 0], min(1.8, gc_alt / 6)
+        elif gc_alt > 0: base_color, strength_multiplier = [147, 112, 219], max(0.5, gc_alt / 6)
+        else: base_color, strength_multiplier = [100, 100, 100], 0.2 
             
-            st.write("### 🔭 Advanced Celestial Tracking Map")
+        dot_data, line_data = [], []
+        for i in range(1, 9):
+            dist = (i / 8) * 0.45 
+            d_lat = lat + dist * math.cos(math.radians(gc_az))
+            d_lon = lon + dist * math.sin(math.radians(gc_az)) / math.cos(math.radians(lat))
             
-            interactive_astro = st.radio("Do you want an interactive map?", ["Yes (Zoom & Pan)", "No (Static Map)"], horizontal=True, key="astro_toggle")
-            is_astro_interactive = (interactive_astro == "Yes (Zoom & Pan)")
-            
-            # --- EXACT TIME SLIDER LOGIC MOVED DIRECTLY ABOVE THE MAP ---
-            start_of_day = datetime.combine(selected_date, time(0, 0))
-            end_of_day = datetime.combine(selected_date, time(23, 59))
-            
-            if selected_date == datetime.today().date():
-                default_time = datetime.now().replace(second=0, microsecond=0)
-            else:
-                default_time = datetime.combine(selected_date, time(12, 0))
-                
-            tracking_time = st.slider(
-                "Select Exact Time (Local):",
-                min_value=start_of_day,
-                max_value=end_of_day,
-                value=default_time,
-                step=timedelta(minutes=1),
-                format="hh:mm A"
+            base_radius = (300 + (i * 400)) * strength_multiplier
+            alpha = int(100 + (i / 8) * 155)
+            dot_data.extend([
+                {"lon": d_lon, "lat": d_lat, "radius": base_radius * 1.5, "color": base_color + [alpha // 3]},
+                {"lon": d_lon, "lat": d_lat, "radius": base_radius * 0.4, "color": base_color + [alpha]}
+            ])
+
+        if sun_alt > -18: line_data.append(create_vector_line(lat, lon, sun_az, 0.45, [255, 140, 0, 200] if sun_alt > 0 else [255, 140, 0, 80]))
+        if moon_alt > -10: line_data.append(create_vector_line(lat, lon, moon_az, 0.45, [200, 220, 255, 200] if moon_alt > 0 else [200, 220, 255, 60]))
+
+        if is_astro_interactive:
+            astro_view = pdk.ViewState(latitude=lat, longitude=lon, zoom=8.5, pitch=45, bearing=0)
+        else:
+            astro_view = pdk.ViewState(
+                latitude=lat, longitude=lon, zoom=8.5, pitch=45, bearing=0,
+                min_zoom=8.5, max_zoom=8.5
             )
             
-            gc_az, gc_alt = get_celestial_az_alt(lat, lon, tracking_time, real_tz, "galactic_core")
-            sun_az, sun_alt = get_celestial_az_alt(lat, lon, tracking_time, real_tz, "sun")
-            moon_az, moon_alt = get_celestial_az_alt(lat, lon, tracking_time, real_tz, "moon")
+        wash_layer = pdk.Layer(
+            'PolygonLayer',
+            data=pd.DataFrame([{"polygon": [[-180, 90], [180, 90], [180, -90], [-180, -90]], "color": wash_color}]),
+            get_polygon='polygon',
+            get_fill_color='color',
+            filled=True,
+            stroked=False,
+            pickable=False
+        )
+
+        st.pydeck_chart(pdk.Deck(
+            map_style='light',
+            views=[pdk.View(type="MapView", controller=is_astro_interactive)],
+            initial_view_state=astro_view,
+            layers=[
+                wash_layer,
+                pdk.Layer('LineLayer', data=pd.DataFrame(line_data) if line_data else pd.DataFrame(columns=["start_lon", "start_lat", "end_lon", "end_lat", "color"]), get_source_position='[start_lon, start_lat]', get_target_position='[end_lon, end_lat]', get_color='color', get_width=3, width_units='"pixels"'),
+                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(dot_data), get_position='[lon, lat]', get_color='color', get_radius='radius', pickable=False)
+            ]
+        ))
+        st.caption("🟠 Orange Line = Sun Direction | ⚪ White Line = Moon Direction | 🟣/🟡 Dots = Milky Way Core")
+
+        st.divider()
+
+        # --- WEATHER / CLOUD COVER AT TARGET TIME ---
+        closest_hour_str = tracking_time.replace(minute=0, second=0, microsecond=0).strftime("%Y-%m-%dT%H:00")
+        hourly_times = base_data.get("hourly", {}).get("time", []) if base_data else []
+
+        st.subheader("🌌 Sky Conditions at Target Time")
+        
+        if base_data and closest_hour_str in hourly_times:
+            baseline_idx = hourly_times.index(closest_hour_str)
+            total_clouds = safe_val(base_data, "cloud_cover", baseline_idx)
+            high_clouds = safe_val(base_data, "cloud_cover_high", baseline_idx)
             
-            # --- DYNAMIC PHOTOPILLS COLOR WASH OVERLAY ---
-            if sun_alt > 6: 
-                wash_color = [255, 240, 200, 25]  
-                sky_status = "☀️ Daytime (Yellow)"
-            elif sun_alt > 0: 
-                wash_color = [255, 140, 0, 45]   
-                sky_status = "🌇 Golden Hour (Orange)"
-            elif sun_alt > -6: 
-                wash_color = [100, 150, 255, 50] 
-                sky_status = "🌆 Blue Hour / Civil Twilight"
-            elif sun_alt > -12: 
-                wash_color = [20, 50, 150, 80]  
-                sky_status = "🌌 Nautical Twilight"
-            elif sun_alt > -18:
-                wash_color = [0, 10, 50, 100]
-                sky_status = "🌌 Astronomical Twilight"
-            else: 
-                wash_color = [0, 0, 20, 140]     
-                sky_status = "🌃 True Night"
-
-            st.write(f"**Target Time:** {tracking_time.strftime('%A, %I:%M %p')}")
-            c_a, c_b, c_c = st.columns(3)
-            c_a.markdown(f"**Milky Way:** Alt {round(gc_alt)}°")
-            c_b.markdown(f"**Sun:** Alt {round(sun_alt)}°")
-            c_c.markdown(f"**Map State:** {sky_status}")
+            aq_idx = aq_data["hourly"]["time"].index(closest_hour_str) if aq_data and "hourly" in aq_data and closest_hour_str in aq_data["hourly"].get("time", []) else 0
+            model_pm25 = safe_val(aq_data, "pm2_5", aq_idx) if aq_data else 0
             
-            if gc_alt > 7: base_color, strength_multiplier = [255, 215, 0], min(1.8, gc_alt / 6)
-            elif gc_alt > 0: base_color, strength_multiplier = [147, 112, 219], max(0.5, gc_alt / 6)
-            else: base_color, strength_multiplier = [100, 100, 100], 0.2 
-                
-            dot_data, line_data = [], []
-            for i in range(1, 9):
-                dist = (i / 8) * 0.45 
-                d_lat = lat + dist * math.cos(math.radians(gc_az))
-                d_lon = lon + dist * math.sin(math.radians(gc_az)) / math.cos(math.radians(lat))
-                
-                base_radius = (300 + (i * 400)) * strength_multiplier
-                alpha = int(100 + (i / 8) * 155)
-                dot_data.extend([
-                    {"lon": d_lon, "lat": d_lat, "radius": base_radius * 1.5, "color": base_color + [alpha // 3]},
-                    {"lon": d_lon, "lat": d_lat, "radius": base_radius * 0.4, "color": base_color + [alpha]}
-                ])
-
-            if sun_alt > -18: line_data.append(create_vector_line(lat, lon, sun_az, 0.45, [255, 140, 0, 200] if sun_alt > 0 else [255, 140, 0, 80]))
-            if moon_alt > -10: line_data.append(create_vector_line(lat, lon, moon_az, 0.45, [200, 220, 255, 200] if moon_alt > 0 else [200, 220, 255, 60]))
-
-            if is_astro_interactive:
-                astro_view = pdk.ViewState(latitude=lat, longitude=lon, zoom=8.5, pitch=45, bearing=0)
+            live_pm25 = aqi_to_pm25(live_aqi) if live_aqi else 0
+            is_override = live_pm25 > (model_pm25 + 10)
+            active_pm25 = live_pm25 if is_override else model_pm25
+            
+            inv_dt_astro, inv_alt_astro = estimate_inversion_height(base_data, baseline_idx)
+            
+            if inv_dt_astro > 0:
+                seeing_quality = "Excellent 🟢 (Stable Air)"
+            elif inv_dt_astro > -3:
+                seeing_quality = "Good 🟡 (Moderate Stability)"
             else:
-                astro_view = pdk.ViewState(
-                    latitude=lat, longitude=lon, zoom=8.5, pitch=45, bearing=0,
-                    min_zoom=8.5, max_zoom=8.5
-                )
+                seeing_quality = "Poor 🔴 (Turbulent)"
                 
-            wash_layer = pdk.Layer(
-                'PolygonLayer',
-                data=pd.DataFrame([{"polygon": [[-180, 90], [180, 90], [180, -90], [-180, -90]], "color": wash_color}]),
-                get_polygon='polygon',
-                get_fill_color='color',
-                filled=True,
-                stroked=False,
-                pickable=False
-            )
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Cloud Cover", f"{total_clouds}%", delta="Clear" if total_clouds < 15 else "Obscured", delta_color="inverse")
+            col2.metric("High Altitude", f"{high_clouds}%")
+            col3.metric("Atmospheric Seeing", seeing_quality.split(" ")[0])
+            col4.metric("PM 2.5 (Smoke)", f"{round(active_pm25)} µg/m³", delta="🚨 SENSOR OVERRIDE" if is_override else ("Clear Air" if active_pm25 <= 10 else "Haze/Smoke"), delta_color="inverse")
+        else:
+            st.info("Weather predictions are currently unavailable for this exact target time.")
 
-            st.pydeck_chart(pdk.Deck(
-                map_style='light',
-                views=[pdk.View(type="MapView", controller=is_astro_interactive)],
-                initial_view_state=astro_view,
-                layers=[
-                    wash_layer,
-                    pdk.Layer('LineLayer', data=pd.DataFrame(line_data) if line_data else pd.DataFrame(columns=["start_lon", "start_lat", "end_lon", "end_lat", "color"]), get_source_position='[start_lon, start_lat]', get_target_position='[end_lon, end_lat]', get_color='color', get_width=3, width_units='"pixels"'),
-                    pdk.Layer('ScatterplotLayer', data=pd.DataFrame(dot_data), get_position='[lon, lat]', get_color='color', get_radius='radius', pickable=False)
-                ]
-            ))
-            st.caption("🟠 Orange Line = Sun Direction | ⚪ White Line = Moon Direction | 🟣/🟡 Dots = Milky Way Core")
-
-            st.divider()
-
-            # --- WEATHER / CLOUD COVER AT TARGET TIME ---
-            closest_hour_str = tracking_time.replace(minute=0, second=0, microsecond=0).strftime("%Y-%m-%dT%H:00")
-            hourly_times = base_data.get("hourly", {}).get("time", []) if base_data else []
-
-            st.subheader("🌌 Sky Conditions at Target Time")
+        # --- COASTAL TIDE ANALYSIS UI (ASTRO) ---
+        st.divider()
+        st.subheader("🌊 Coastal Tide Context")
+        if not fetch_tides_toggle:
+            st.info("⏸️ **Tide Tracker Paused:** Check the 'Fetch Coastal Tide Data' box at the top of the app to consume an API call and load tide times.")
+        elif tide_data == "demo":
+            st.info("💡 **Tide Tracker Inactive:** To track high/low tide times for coastal reflections and sea stacks, replace `STORMGLASS_TOKEN` at the top of the script with a free API key from stormglass.io.")
+        elif isinstance(tide_data, list) and len(tide_data) > 0:
             
-            if base_data and closest_hour_str in hourly_times:
-                baseline_idx = hourly_times.index(closest_hour_str)
-                total_clouds = safe_val(base_data, "cloud_cover", baseline_idx)
-                high_clouds = safe_val(base_data, "cloud_cover_high", baseline_idx)
+            target_dt = pd.Timestamp(tracking_time)
+            if target_dt.tzinfo is None:
+                target_dt = target_dt.tz_localize(real_tz)
+            else:
+                target_dt = target_dt.tz_convert(real_tz)
                 
-                aq_idx = aq_data["hourly"]["time"].index(closest_hour_str) if aq_data and "hourly" in aq_data and closest_hour_str in aq_data["hourly"].get("time", []) else 0
-                model_pm25 = safe_val(aq_data, "pm2_5", aq_idx) if aq_data else 0
-                
-                live_pm25 = aqi_to_pm25(live_aqi) if live_aqi else 0
-                is_override = live_pm25 > (model_pm25 + 10)
-                active_pm25 = live_pm25 if is_override else model_pm25
-                
-                inv_dt_astro, inv_alt_astro = estimate_inversion_height(base_data, baseline_idx)
-                
-                if inv_dt_astro > 0:
-                    seeing_quality = "Excellent 🟢 (Stable Air)"
-                elif inv_dt_astro > -3:
-                    seeing_quality = "Good 🟡 (Moderate Stability)"
-                else:
-                    seeing_quality = "Poor 🔴 (Turbulent)"
+            parsed_tides = []
+            for t in tide_data:
+                try:
+                    t_time = pd.to_datetime(t['time']).tz_convert(real_tz)
+                    parsed_tides.append((t_time, t['type'], t['height']))
+                except:
+                    continue
                     
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Cloud Cover", f"{total_clouds}%", delta="Clear" if total_clouds < 15 else "Obscured", delta_color="inverse")
-                col2.metric("High Altitude", f"{high_clouds}%")
-                col3.metric("Atmospheric Seeing", seeing_quality.split(" ")[0])
-                col4.metric("PM 2.5 (Smoke)", f"{round(active_pm25)} µg/m³", delta="🚨 SENSOR OVERRIDE" if is_override else ("Clear Air" if active_pm25 <= 10 else "Haze/Smoke"), delta_color="inverse")
-            else:
-                st.info("Weather predictions are currently unavailable for this exact target time.")
-
-            # --- COASTAL TIDE ANALYSIS UI (ASTRO) ---
-            st.divider()
-            st.subheader("🌊 Coastal Tide Context")
-            if not fetch_tides_toggle:
-                st.info("⏸️ **Tide Tracker Paused:** Check the 'Fetch Coastal Tide Data' box at the top of the app to consume an API call and load tide times.")
-            elif tide_data == "demo":
-                st.info("💡 **Tide Tracker Inactive:** To track high/low tide times for coastal reflections and sea stacks, replace `STORMGLASS_TOKEN` at the top of the script with a free API key from stormglass.io.")
-            elif isinstance(tide_data, list) and len(tide_data) > 0:
-                
-                target_dt = pd.Timestamp(tracking_time)
-                if target_dt.tzinfo is None:
-                    target_dt = target_dt.tz_localize(real_tz)
-                else:
-                    target_dt = target_dt.tz_convert(real_tz)
+            parsed_tides.sort(key=lambda x: x[0])
+            
+            past_tides = [t for t in parsed_tides if t[0] < target_dt]
+            future_tides = [t for t in parsed_tides if t[0] >= target_dt]
+            
+            display_tides = []
+            if past_tides:
+                display_tides.append(past_tides[-1])
+            display_tides.extend(future_tides[:3]) 
+            
+            if display_tides:
+                t_cols = st.columns(len(display_tides))
+                for i, (t_time, t_type, t_height) in enumerate(display_tides):
+                    icon = "🔼 High" if t_type == "high" else "🔽 Low"
+                    t_height_ft = round(t_height * 3.28084, 1)
                     
-                parsed_tides = []
-                for t in tide_data:
-                    try:
-                        t_time = pd.to_datetime(t['time']).tz_convert(real_tz)
-                        parsed_tides.append((t_time, t['type'], t['height']))
-                    except:
-                        continue
+                    delta_hrs = (t_time - target_dt).total_seconds() / 3600
+                    if delta_hrs < 0:
+                        rel_str = f"{-delta_hrs:.1f}h before"
+                    else:
+                        rel_str = f"+{delta_hrs:.1f}h after"
                         
-                parsed_tides.sort(key=lambda x: x[0])
-                
-                past_tides = [t for t in parsed_tides if t[0] < target_dt]
-                future_tides = [t for t in parsed_tides if t[0] >= target_dt]
-                
-                display_tides = []
-                if past_tides:
-                    display_tides.append(past_tides[-1])
-                display_tides.extend(future_tides[:3]) 
-                
-                if display_tides:
-                    t_cols = st.columns(len(display_tides))
-                    for i, (t_time, t_type, t_height) in enumerate(display_tides):
-                        icon = "🔼 High" if t_type == "high" else "🔽 Low"
-                        t_height_ft = round(t_height * 3.28084, 1)
-                        
-                        delta_hrs = (t_time - target_dt).total_seconds() / 3600
-                        if delta_hrs < 0:
-                            rel_str = f"{-delta_hrs:.1f}h before"
-                        else:
-                            rel_str = f"+{delta_hrs:.1f}h after"
-                            
-                        t_cols[i].metric(
-                            f"{icon} ({t_time.strftime('%a %I:%M %p')})", 
-                            f"{round(t_height, 2)}m", 
-                            f"{t_height_ft}ft | {rel_str}", 
-                            delta_color="off"
-                        )
-                else:
-                    st.info("No extreme tide events detected around this time window.")
+                    t_cols[i].metric(
+                        f"{icon} ({t_time.strftime('%a %I:%M %p')})", 
+                        f"{round(t_height, 2)}m", 
+                        f"{t_height_ft}ft | {rel_str}", 
+                        delta_color="off"
+                    )
             else:
-                st.info("No tidal data available for this location (likely an inland elevation).")
-            
-            # --- LIVE CLOUD MOVEMENT EMBED (ASTRO) ---
-            st.divider()
-            st.subheader("☁️ Live Cloud Movement & Tracking")
-            st.write("Ensure the exact window of your astrophotography shoot remains completely clear of incoming cloud banks.")
-            
-            windy_html = f"""
-            <iframe width="100%" height="500" 
-                src="https://embed.windy.com/embed2.html?lat={lat}&lon={lon}&zoom=7&level=surface&overlay=clouds&product=ecmwf&menu=&message=true&marker=true&calendar=now&pressure=&type=map&location=coordinates&detail=&metricWind=km%2Fh&metricTemp=%C2%B0C&radarRange=-1" 
-                frameborder="0">
-            </iframe>
-            """
-            components.html(windy_html, height=500)
+                st.info("No extreme tide events detected around this time window.")
+        else:
+            st.info("No tidal data available for this location (likely an inland elevation).")
+        
+        # --- LIVE CLOUD MOVEMENT EMBED (ASTRO) ---
+        st.divider()
+        st.subheader("☁️ Live Cloud Movement & Tracking")
+        st.write("Ensure the exact window of your astrophotography shoot remains completely clear of incoming cloud banks.")
+        
+        windy_html = f"""
+        <iframe width="100%" height="500" 
+            src="https://embed.windy.com/embed2.html?lat={lat}&lon={lon}&zoom=7&level=surface&overlay=clouds&product=ecmwf&menu=&message=true&marker=true&calendar=now&pressure=&type=map&location=coordinates&detail=&metricWind=km%2Fh&metricTemp=%C2%B0C&radarRange=-1" 
+            frameborder="0">
+        </iframe>
+        """
+        components.html(windy_html, height=500)
