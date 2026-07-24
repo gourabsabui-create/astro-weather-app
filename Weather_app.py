@@ -19,7 +19,6 @@ CACHE_FILE = "saved_locations.json"
 
 # --- LOCAL FILE STORAGE ENGINE FOR OFFLINE ACCESS ---
 def load_saved_locations():
-    """Reads previously searched locations from local storage."""
     if os.path.exists(CACHE_FILE):
         try:
             with open(CACHE_FILE, "r") as f:
@@ -29,7 +28,6 @@ def load_saved_locations():
     return {}
 
 def save_location_to_cache(name, lat, lon, tz):
-    """Saves a newly searched location into local storage for offline use."""
     locations = load_saved_locations()
     locations[name] = {"lat": float(lat), "lon": float(lon), "tz": tz}
     try:
@@ -40,22 +38,30 @@ def save_location_to_cache(name, lat, lon, tz):
 
 # --- CACHED API FUNCTIONS ---
 
-# REVERTED & UPGRADED: Back to OpenStreetMap for landmarks, with a custom User-Agent to stop rate-limiting
+# UPGRADED GEOCODER: Photon by Komoot prevents the rate-limiting blocks you saw with Chicago
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_geocoding(query):
     try:
-        headers = {"User-Agent": "AstroForecaster_Field_App/1.0"}
-        payload = {"q": query, "format": "json", "limit": 10}
-        res = requests.get("https://nominatim.openstreetmap.org/search", params=payload, headers=headers, timeout=5).json()
+        payload = {"q": query, "limit": 10}
+        res = requests.get("https://photon.komoot.io/api/", params=payload, timeout=5).json()
         
-        if res:
+        if res and "features" in res:
             formatted_results = []
-            for loc in res:
+            for loc in res["features"]:
+                props = loc.get("properties", {})
+                coords = loc.get("geometry", {}).get("coordinates", [0, 0])
+                
+                parts = [props.get("name")]
+                if "state" in props: parts.append(props["state"])
+                if "country" in props: parts.append(props["country"])
+                
+                display_name = ", ".join(filter(None, parts))
+                
                 formatted_results.append({
-                    "name": loc.get("display_name"),
-                    "latitude": float(loc.get("lat")),
-                    "longitude": float(loc.get("lon")),
-                    "timezone": "auto" # Open-Meteo handles "auto" perfectly
+                    "name": display_name,
+                    "latitude": float(coords[1]), # GeoJSON returns [lon, lat]
+                    "longitude": float(coords[0]),
+                    "timezone": "auto" 
                 })
             return {"results": formatted_results}
         return None
@@ -329,13 +335,12 @@ with st.sidebar:
     mode = st.radio("Dashboard Mode:", ["🌅 Sunrise & Sunset", "🌌 Astrophotography"])
     st.divider()
     
-    input_method = st.radio("Location Entry:", ["🔍 Online Search", "📂 Saved Spots (Offline Storage)"])
+    input_method = st.radio("Location Entry:", ["🔍 Online Search", "📂 Saved Spots (Offline Storage)", "🛰️ Live GPS Sensor"])
     
     lat, lon, tz = None, None, None
     cached_db = load_saved_locations()
     
     if input_method == "🔍 Online Search":
-        
         search_query = st.text_input("Enter location name:", placeholder="e.g., Lake Louise, Yosemite")
         
         if search_query:
@@ -357,7 +362,6 @@ with st.sidebar:
                 lon = location_options[selected_loc]["lon"]
                 tz = location_options[selected_loc]["tz"]
                 
-                # Automatically save successfully searched location to local storage
                 save_location_to_cache(selected_loc, lat, lon, tz)
 
     elif input_method == "📂 Saved Spots (Offline Storage)":
@@ -370,6 +374,41 @@ with st.sidebar:
             st.success(f"Loaded: {selected_offline_spot}")
         else:
             st.warning("No spots cached in local storage yet. Search a few locations while online first!")
+            
+    elif input_method == "🛰️ Live GPS Sensor":
+        st.info("Tap below to ask your phone's hardware GPS chip for your exact coordinates. Then, punch those numbers into the offline manual boxes below.")
+        
+        gps_html = """
+        <div style="font-family: sans-serif; color: white;">
+            <button onclick="getLocation()" style="background-color: #4CAF50; color: white; padding: 10px 15px; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; width: 100%;">📍 Request GPS Permission</button>
+            <p id="gps-data" style="margin-top: 15px; font-size: 16px; font-weight: bold;"></p>
+        </div>
+        <script>
+        function getLocation() {
+            var x = document.getElementById("gps-data");
+            x.innerHTML = "<i>Ping satellites... Please wait...</i>";
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(showPosition, showError, {enableHighAccuracy: true, timeout: 10000, maximumAge: 0});
+            } else {
+                x.innerHTML = "Geolocation is not supported by this browser.";
+            }
+        }
+        function showPosition(position) {
+            document.getElementById("gps-data").innerHTML = 
+            "Latitude: <span style='color: #4CAF50;'>" + position.coords.latitude.toFixed(5) + "</span><br>" +
+            "Longitude: <span style='color: #4CAF50;'>" + position.coords.longitude.toFixed(5) + "</span>";
+        }
+        function showError(error) {
+            document.getElementById("gps-data").innerHTML = "❌ GPS Error: " + error.message;
+        }
+        </script>
+        """
+        components.html(gps_html, height=150)
+        
+        st.divider()
+        lat = st.number_input("Latitude:", value=37.7749, format="%.5f")
+        lon = st.number_input("Longitude:", value=-122.4194, format="%.5f")
+        tz = "auto"
         
     st.divider()
     fetch_tides_toggle = st.checkbox("🌊 Fetch Coastal Tides", value=False, help="Consumes 1 Stormglass API Call")
