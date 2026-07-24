@@ -365,6 +365,13 @@ if search_query:
                                 opaque_deck = l_low + l_mid
                                 potential = round(max(0, min(100, ((l_mid * 0.48) + (max(l_high, max(0, safe_val(loc_w, "relative_humidity_300hPa", idx) - 50)) * 1.15 * (1.0 - max(0, min(1.0, (opaque_deck - 45) / 45))))))))
                                 skunk = round(min(100, max(max(0, (l_low - 50) * 2.0), max(0, (opaque_deck - 70) * 3.0) if opaque_deck > 70 else 0)))
+                                
+                                # FOG & INVERSION CALCULATIONS
+                                inversion_deg = round(t_1000m - t_100m, 1)
+                                if inversion_deg > 0:
+                                    fog_details = f"High Risk (+{inversion_deg}°C Inversion, Trapped < 1000m)"
+                                else:
+                                    fog_details = "Low Risk (Unstable Air, No Inversion)"
 
                                 map_data.append({
                                     "lat": c[0], "lon": c[1],
@@ -374,14 +381,14 @@ if search_query:
                                     "cloud_low": l_low,
                                     "cloud_mid": l_mid,
                                     "cloud_high": l_high,
-                                    "fog_weight": 100 if (t_1000m > t_100m) else 0
+                                    "fog_weight": 100 if inversion_deg > 0 else 0,
+                                    "fog_text": fog_details
                                 })
                             except: continue
 
                         df_map = pd.DataFrame(map_data)
                         layers = []
 
-                        # 1. Continuous Heatmap Visuals
                         if show_burn and not df_map[df_map['potential'] > 0].empty:
                             layers.append(pdk.Layer(
                                 'HeatmapLayer',
@@ -426,22 +433,24 @@ if search_query:
                                 colorRange=[[237, 248, 251], [178, 226, 226], [102, 194, 164], [44, 162, 95], [0, 109, 44]] 
                             ))
 
-                        # 2. The Invisible Interactive Scatterplot Layer (Preserves tooltips on top of the heat map)
+                        # INVISIBLE INTERACTIVE SCATTERPLOT LAYER
                         layers.append(pdk.Layer(
                             'ScatterplotLayer',
                             data=df_map,
                             get_position='[lon, lat]',
-                            get_color=[0, 0, 0, 0], # Totally transparent
+                            get_color=[0, 0, 0, 0], 
                             get_radius=5000 * r_mult,
                             pickable=True
                         ))
 
+                        # TOOLTIP WITH FOG DETAILS
                         tooltip_html = (
                             "<b>Coordinates:</b> {lat}, {lon}<br/>"
                             "<b>🔥 Burn Potential:</b> {potential}/100<br/>"
                             "<b>🦨 Skunk Chance:</b> {skunk}%<br/>"
                             "<b>🌲 Smoke (PM 2.5):</b> {pm25} µg/m³<br/>"
-                            "<b>☁️ Clouds (Low/Mid/High):</b> {cloud_low}% / {cloud_mid}% / {cloud_high}%"
+                            "<b>☁️ Clouds (Low/Mid/High):</b> {cloud_low}% / {cloud_mid}% / {cloud_high}%<br/>"
+                            "<b>🌫️ Fog / Inversion:</b> {fog_text}"
                         )
 
                         st.pydeck_chart(pdk.Deck(
