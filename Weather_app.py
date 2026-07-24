@@ -365,24 +365,42 @@ if search_query:
                                 potential = round(max(0, min(100, ((l_mid * 0.48) + (max(l_high, max(0, safe_val(loc_w, "relative_humidity_300hPa", idx) - 50)) * 1.15 * (1.0 - max(0, min(1.0, (opaque_deck - 45) / 45))))))))
                                 skunk = round(min(100, max(max(0, (l_low - 50) * 2.0), max(0, (opaque_deck - 70) * 3.0) if opaque_deck > 70 else 0)))
 
+                                # ADDED EXTRA DATA FOR TOOLTIPS
                                 map_data.append({
                                     "lat": c[0], "lon": c[1],
                                     "burn_color": [255, max(0, int(255 - (potential * 2.55))), 0, 140] if show_burn else [0,0,0,0],
                                     "skunk_color": [min(255, int(skunk * 2.55)), 0, max(0, 200 - int(skunk * 2)), 190] if show_skunk else [0,0,0,0],
                                     "smoke_color": [139, 69, 19, min(200, int(grid_pm25 * 3))] if show_smoke else [0,0,0,0], 
-                                    "fog_color": [180, 220, 255, 200] if (t_1000m > t_100m and show_fog) else [0,0,0,0]
+                                    "fog_color": [180, 220, 255, 200] if (t_1000m > t_100m and show_fog) else [0,0,0,0],
+                                    "potential": potential,
+                                    "skunk": skunk,
+                                    "pm25": round(grid_pm25),
+                                    "cloud_low": l_low,
+                                    "cloud_mid": l_mid,
+                                    "cloud_high": l_high
                                 })
                             except: continue
 
+                        # ADDED HTML TOOLTIP TEMPLATE
+                        tooltip_html = (
+                            "<b>Coordinates:</b> {lat}, {lon}<br/>"
+                            "<b>🔥 Burn Potential:</b> {potential}/100<br/>"
+                            "<b>🦨 Skunk Chance:</b> {skunk}%<br/>"
+                            "<b>🌲 Smoke (PM 2.5):</b> {pm25} µg/m³<br/>"
+                            "<b>☁️ Clouds (Low/Mid/High):</b> {cloud_low}% / {cloud_mid}% / {cloud_high}%"
+                        )
+
+                        # ADDED PICKABLE=TRUE AND TOOLTIP
                         st.pydeck_chart(pdk.Deck(
                             map_style='dark',
                             initial_view_state=pdk.ViewState(latitude=lat, longitude=lon, zoom=7.5, pitch=0),
                             layers=[
-                                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(map_data), get_position='[lon, lat]', get_color='burn_color', get_radius=5000),
-                                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(map_data), get_position='[lon, lat]', get_color='skunk_color', get_radius=3000),
-                                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(map_data), get_position='[lon, lat]', get_color='smoke_color', get_radius=1500), 
-                                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(map_data), get_position='[lon, lat]', get_color='fog_color', get_radius=700)
-                            ]
+                                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(map_data), get_position='[lon, lat]', get_color='burn_color', get_radius=5000, pickable=True),
+                                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(map_data), get_position='[lon, lat]', get_color='skunk_color', get_radius=3000, pickable=True),
+                                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(map_data), get_position='[lon, lat]', get_color='smoke_color', get_radius=1500, pickable=True), 
+                                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(map_data), get_position='[lon, lat]', get_color='fog_color', get_radius=700, pickable=True)
+                            ],
+                            tooltip={"html": tooltip_html, "style": {"backgroundColor": "#222222", "color": "white"}}
                         ))
 
 
