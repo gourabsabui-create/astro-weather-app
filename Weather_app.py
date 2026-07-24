@@ -17,7 +17,6 @@ WAQI_TOKEN = "demo" # Replace with a free token from aqicn.org if you hit rate l
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_geocoding(query):
     try:
-        # Swapped to OpenStreetMap (Nominatim) for Landmark & Park support
         headers = {"User-Agent": "LandscapeAstroForecaster/1.0"}
         payload = {"q": query, "format": "json", "limit": 10}
         res = requests.get("https://nominatim.openstreetmap.org/search", params=payload, headers=headers, timeout=5).json()
@@ -57,7 +56,6 @@ def fetch_air_quality(lat, lon, timezone="auto"):
     except:
         return None
 
-# NEW: Live Ground Sensor Aggregator (10 min cache for real-time tracking)
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_waqi_live(lat, lon):
     try:
@@ -318,7 +316,7 @@ if search_query:
 
                 st.divider()
                 
-                # --- NEW DYNAMIC GRID UI ---
+                # --- DYNAMIC HEAT MAP UI ---
                 st.subheader("🗺️ High-Resolution Regional Overlay")
                 
                 zoom_level = st.select_slider(
@@ -329,7 +327,7 @@ if search_query:
                 
                 step_dict = {"Micro (~20km)": 0.02, "Local (~45km)": 0.04, "Regional (~90km)": 0.08, "Macro (~160km)": 0.15}
                 step = step_dict[zoom_level]
-                r_mult = step / 0.08 # Multiplier to dynamically resize circles based on grid spread
+                r_mult = step / 0.08 
                 
                 c_b, c_sk, c_sm, c_f = st.columns(4)
                 show_burn = c_b.checkbox("🔥 Burn", value=True)
@@ -337,7 +335,7 @@ if search_query:
                 show_smoke = c_sm.checkbox("🌲 Smoke", value=True)
                 show_fog = c_f.checkbox("☁️ Fog", value=False)
 
-                with st.spinner("Rendering cached spatial overlay..."):
+                with st.spinner("Rendering cached continuous heat map..."):
                     grid_size = 10
                     lats = [lat + (i - grid_size//2)*step for i in range(grid_size)]
                     lons = [lon + (i - grid_size//2)*step for i in range(grid_size)]
@@ -370,18 +368,73 @@ if search_query:
 
                                 map_data.append({
                                     "lat": c[0], "lon": c[1],
-                                    "burn_color": [255, max(0, int(255 - (potential * 2.55))), 0, 140] if show_burn else [0,0,0,0],
-                                    "skunk_color": [min(255, int(skunk * 2.55)), 0, max(0, 200 - int(skunk * 2)), 190] if show_skunk else [0,0,0,0],
-                                    "smoke_color": [139, 69, 19, min(200, int(grid_pm25 * 3))] if show_smoke else [0,0,0,0], 
-                                    "fog_color": [180, 220, 255, 200] if (t_1000m > t_100m and show_fog) else [0,0,0,0],
                                     "potential": potential,
                                     "skunk": skunk,
                                     "pm25": round(grid_pm25),
                                     "cloud_low": l_low,
                                     "cloud_mid": l_mid,
-                                    "cloud_high": l_high
+                                    "cloud_high": l_high,
+                                    "fog_weight": 100 if (t_1000m > t_100m) else 0
                                 })
                             except: continue
+
+                        df_map = pd.DataFrame(map_data)
+                        layers = []
+
+                        # 1. Continuous Heatmap Visuals
+                        if show_burn and not df_map[df_map['potential'] > 0].empty:
+                            layers.append(pdk.Layer(
+                                'HeatmapLayer',
+                                data=df_map[df_map['potential'] > 0],
+                                get_position='[lon, lat]',
+                                get_weight='potential',
+                                opacity=0.6,
+                                radiusPixels=55,
+                                colorRange=[[255, 237, 160], [254, 178, 76], [253, 141, 60], [240, 59, 32], [189, 0, 38]]
+                            ))
+                            
+                        if show_skunk and not df_map[df_map['skunk'] > 0].empty:
+                            layers.append(pdk.Layer(
+                                'HeatmapLayer',
+                                data=df_map[df_map['skunk'] > 0],
+                                get_position='[lon, lat]',
+                                get_weight='skunk',
+                                opacity=0.6,
+                                radiusPixels=55,
+                                colorRange=[[242, 240, 247], [203, 201, 226], [158, 154, 200], [117, 107, 177], [84, 39, 143]] 
+                            ))
+
+                        if show_smoke and not df_map[df_map['pm25'] > 0].empty:
+                            layers.append(pdk.Layer(
+                                'HeatmapLayer',
+                                data=df_map[df_map['pm25'] > 0],
+                                get_position='[lon, lat]',
+                                get_weight='pm25',
+                                opacity=0.6,
+                                radiusPixels=55,
+                                colorRange=[[246, 232, 195], [223, 194, 125], [191, 129, 45], [140, 81, 10], [84, 48, 5]]
+                            ))
+
+                        if show_fog and not df_map[df_map['fog_weight'] > 0].empty:
+                            layers.append(pdk.Layer(
+                                'HeatmapLayer',
+                                data=df_map[df_map['fog_weight'] > 0],
+                                get_position='[lon, lat]',
+                                get_weight='fog_weight',
+                                opacity=0.6,
+                                radiusPixels=55,
+                                colorRange=[[237, 248, 251], [178, 226, 226], [102, 194, 164], [44, 162, 95], [0, 109, 44]] 
+                            ))
+
+                        # 2. The Invisible Interactive Scatterplot Layer (Preserves tooltips on top of the heat map)
+                        layers.append(pdk.Layer(
+                            'ScatterplotLayer',
+                            data=df_map,
+                            get_position='[lon, lat]',
+                            get_color=[0, 0, 0, 0], # Totally transparent
+                            get_radius=5000 * r_mult,
+                            pickable=True
+                        ))
 
                         tooltip_html = (
                             "<b>Coordinates:</b> {lat}, {lon}<br/>"
@@ -393,13 +446,12 @@ if search_query:
 
                         st.pydeck_chart(pdk.Deck(
                             map_style='dark',
-                            initial_view_state=pdk.ViewState(latitude=lat, longitude=lon, zoom=7.5 if zoom_level == "Regional (~90km)" else (9.5 if zoom_level == "Micro (~20km)" else 8.5), pitch=0),
-                            layers=[
-                                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(map_data), get_position='[lon, lat]', get_color='burn_color', get_radius=5000 * r_mult, pickable=True),
-                                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(map_data), get_position='[lon, lat]', get_color='skunk_color', get_radius=3000 * r_mult, pickable=True),
-                                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(map_data), get_position='[lon, lat]', get_color='smoke_color', get_radius=1500 * r_mult, pickable=True), 
-                                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(map_data), get_position='[lon, lat]', get_color='fog_color', get_radius=700 * r_mult, pickable=True)
-                            ],
+                            initial_view_state=pdk.ViewState(
+                                latitude=lat, longitude=lon, 
+                                zoom=7.5 if zoom_level == "Regional (~90km)" else (9.5 if zoom_level == "Micro (~20km)" else 8.5), 
+                                pitch=0
+                            ),
+                            layers=layers,
                             tooltip={"html": tooltip_html, "style": {"backgroundColor": "#222222", "color": "white"}}
                         ))
 
