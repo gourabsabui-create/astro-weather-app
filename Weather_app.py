@@ -92,7 +92,6 @@ gps_locator = components.declare_component("gps_locator", path="gps_component")
 # --- DUAL-ENGINE GEOCODER (OpenStreetMap + Open-Meteo Fallback) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_geocoding(query):
-    # Expanded limits to 10 for better search variety
     try:
         headers = {"User-Agent": "AstroFieldApp_Mobile/2.0 (contact@example.com)"}
         payload = {"q": query, "format": "json", "limit": 10}
@@ -408,7 +407,6 @@ with st.sidebar:
                 location_options = {}
                 for loc in geo_response["results"]:
                     display_name = loc.get("name", "Unknown Location")
-                    # Build unique key to prevent dictionary overwrites
                     unique_name = f"{display_name} ({loc['latitude']:.2f}, {loc['longitude']:.2f})"
                     location_options[unique_name] = {
                         "lat": loc["latitude"], 
@@ -417,7 +415,6 @@ with st.sidebar:
                         "clean_name": display_name
                     }
                 
-                # BUG FIX: Replaced glitchy mobile selectbox with touch-friendly radio buttons
                 selected_loc = st.radio("Select exact match:", list(location_options.keys()))
                 lat = location_options[selected_loc]["lat"]
                 lon = location_options[selected_loc]["lon"]
@@ -460,7 +457,6 @@ st.title("🏔️ Landscape & Astro Forecaster")
 if lat is None or lon is None or tz is None:
     st.info("👈 Open the sidebar menu to search for a location or auto-feed your GPS.")
 else:
-    # Feature Request: Print exact location prominently at the top
     st.markdown(f"### 📍 {active_location_name}")
     st.divider()
 
@@ -632,18 +628,18 @@ else:
                     layers = []
 
                     if not df_map.empty:
-                        tuple_map_data = tuple(tuple(d.items()) for d in map_data)
+                        # BUG FIX: Reverted to standard dictionary passing to restore heatmap overlays
                         if show_burn:
-                            l_b = interpolate_dense_grid(tuple_map_data, 'potential', BURN_CMAP, 100.0, step)
+                            l_b = interpolate_dense_grid(map_data, 'potential', BURN_CMAP, 100.0, step)
                             if l_b: layers.append(l_b)
                         if show_skunk:
-                            l_sk = interpolate_dense_grid(tuple_map_data, 'skunk', SKUNK_CMAP, 100.0, step)
+                            l_sk = interpolate_dense_grid(map_data, 'skunk', SKUNK_CMAP, 100.0, step)
                             if l_sk: layers.append(l_sk)
                         if show_smoke:
-                            l_sm = interpolate_dense_grid(tuple_map_data, 'pm25', SMOKE_CMAP, 150.0, step)
+                            l_sm = interpolate_dense_grid(map_data, 'pm25', SMOKE_CMAP, 150.0, step)
                             if l_sm: layers.append(l_sm)
                         if show_fog:
-                            l_fg = interpolate_dense_grid(tuple_map_data, 'fog_weight', FOG_CMAP, 100.0, step)
+                            l_fg = interpolate_dense_grid(map_data, 'fog_weight', FOG_CMAP, 100.0, step)
                             if l_fg: layers.append(l_fg)
 
                         pad_lat, pad_lon = step / 2, step / 2
