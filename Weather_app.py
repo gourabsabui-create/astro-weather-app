@@ -13,8 +13,8 @@ st.set_page_config(page_title="Light & Fog Predictor", page_icon="🏔️", layo
 st.title("🏔️ Landscape & Astro Forecaster")
 st.caption("Multi-model consensus | Celestial Tracking | Live Ground Sensors")
 
-WAQI_TOKEN = "demo" # Replace with a free token from aqicn.org if you hit rate limits
-STORMGLASS_TOKEN = "41a49954-877a-11f1-bcd5-0242ac120004-41a499e0-877a-11f1-bcd5-0242ac120004" # Replace with a free token from stormglass.io for global tide data
+WAQI_TOKEN = "ee0ee12bcf2cf2da796899543b1d0f91d20e3c7a" # Replace with a free token from aqicn.org if you hit rate limits
+STORMGLASS_TOKEN = "41a49954-877a-11f1-bcd5-0242ac120004-41a499e0-877a-11f1-bcd5-0242ac120004" 
 
 # --- CACHED API FUNCTIONS (OFFLINE MODE FAILSAFE) ---
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -312,12 +312,17 @@ if search_query:
         lat = location_options[selected_loc]["lat"]
         lon = location_options[selected_loc]["lon"]
         tz = location_options[selected_loc]["tz"]
+        
+        # --- NEW OPT-IN TOGGLE FOR API CONSERVATION ---
+        fetch_tides_toggle = st.checkbox("🌊 Fetch Coastal Tide Data (Consumes 1 Stormglass API Call)", value=False)
 
         with st.spinner('Loading marine and atmospheric data...'):
             base_data = fetch_weather(lat, lon, tz)
             aq_data = fetch_air_quality(lat, lon, tz)
             live_aqi, live_station = fetch_waqi_live(lat, lon)
-            tide_data = fetch_tides(lat, lon)
+            
+            # Conditionally fetch tides based on the toggle to save free-tier limits
+            tide_data = fetch_tides(lat, lon) if fetch_tides_toggle else None
 
         st.divider()
 
@@ -438,7 +443,9 @@ if search_query:
                 # --- COASTAL TIDE ANALYSIS UI ---
                 st.divider()
                 st.subheader("🌊 Coastal Tide Extremes")
-                if tide_data == "demo":
+                if not fetch_tides_toggle:
+                    st.info("⏸️ **Tide Tracker Paused:** Check the 'Fetch Coastal Tide Data' box at the top of the app to consume an API call and load tide times.")
+                elif tide_data == "demo":
                     st.info("💡 **Tide Tracker Inactive:** To track high/low tide times for coastal reflections and sea stacks, replace `STORMGLASS_TOKEN` at the top of the script with a free API key from stormglass.io.")
                 elif isinstance(tide_data, list) and len(tide_data) > 0:
                     target_date = dt.date()
@@ -713,7 +720,9 @@ if search_query:
             # --- COASTAL TIDE ANALYSIS UI (ASTRO) ---
             st.divider()
             st.subheader("🌊 Coastal Tide Extremes")
-            if tide_data == "demo":
+            if not fetch_tides_toggle:
+                st.info("⏸️ **Tide Tracker Paused:** Check the 'Fetch Coastal Tide Data' box at the top of the app to consume an API call and load tide times.")
+            elif tide_data == "demo":
                 st.info("💡 **Tide Tracker Inactive:** To track high/low tide times for coastal reflections and sea stacks, replace `STORMGLASS_TOKEN` at the top of the script with a free API key from stormglass.io.")
             elif isinstance(tide_data, list) and len(tide_data) > 0:
                 target_date = dt.date()
