@@ -395,26 +395,39 @@ with st.sidebar:
                 st.query_params.clear()
                 st.rerun()
         else:
-            st.info("Tap below to ask your phone's hardware GPS chip for your exact coordinates. The app will auto-refresh and load your spot!")
+            st.info("Tap below to ask your phone's hardware GPS chip for your exact coordinates. The app will generate a secure link to load your spot!")
             
-            # The Magic JavaScript Hack: Grabs GPS and instantly reloads the Python script via the URL
+            # --- THE SANDBOX ESCAPE HACK ---
+            # Instead of forcing a redirect, it generates an <a> tag button. 
+            # The browser allows the user-initiated click to pass the data to the parent window seamlessly!
             gps_html = """
-            <div style="font-family: sans-serif; color: white;">
-                <button onclick="getLocation()" style="background-color: #4CAF50; color: white; padding: 10px 15px; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; width: 100%;">📍 Auto-Feed Current GPS</button>
+            <div style="font-family: sans-serif; color: white; text-align: center;">
+                <button id="ping-btn" onclick="getLocation()" style="background-color: #4CAF50; color: white; padding: 10px 15px; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; width: 100%;">📍 Ping GPS Satellites</button>
                 <p id="gps-data" style="margin-top: 15px; font-size: 14px; font-weight: bold;"></p>
+                <div id="link-container"></div>
             </div>
             <script>
             function getLocation() {
                 var x = document.getElementById("gps-data");
+                var btn = document.getElementById("ping-btn");
+                btn.style.display = "none";
                 x.innerHTML = "<i>Pinging satellites... Allow location access if prompted.</i>";
+                
                 if (navigator.geolocation) {
                     navigator.geolocation.getCurrentPosition(function(position) {
                         var lat = position.coords.latitude.toFixed(5);
                         var lon = position.coords.longitude.toFixed(5);
-                        // Force Streamlit to reload with these exact coordinates in the URL
-                        window.parent.location.search = "?gps_lat=" + lat + "&gps_lon=" + lon;
+                        x.innerHTML = "✅ GPS Lock Acquired: " + lat + ", " + lon;
+                        
+                        var link = document.createElement("a");
+                        link.href = "?gps_lat=" + lat + "&gps_lon=" + lon;
+                        link.target = "_parent"; 
+                        link.innerHTML = "<button style='background-color: #008CBA; color: white; padding: 10px 15px; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; width: 100%; margin-top: 10px;'>🚀 Load Map with GPS</button>";
+                        
+                        document.getElementById("link-container").appendChild(link);
                     }, function(error) {
                         x.innerHTML = "❌ Error: " + error.message;
+                        btn.style.display = "block";
                     }, {enableHighAccuracy: true, timeout: 10000, maximumAge: 0});
                 } else {
                     x.innerHTML = "Geolocation not supported.";
@@ -422,7 +435,7 @@ with st.sidebar:
             }
             </script>
             """
-            components.html(gps_html, height=150)
+            components.html(gps_html, height=180)
         
     st.divider()
     fetch_tides_toggle = st.checkbox("🌊 Fetch Coastal Tides", value=False, help="Consumes 1 Stormglass API Call")
