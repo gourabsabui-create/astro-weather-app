@@ -325,7 +325,13 @@ def create_vector_line(lat, lon, azimuth, length_deg, color):
 
 # --- APP START ---
 mode = st.radio("Select Dashboard Mode:", ["🌅 Sunrise & Sunset", "🌌 Astrophotography"], horizontal=True)
-search_query = st.text_input("Enter a location (e.g., Jasper, Banff, Yosemite):", "Lake Louise, Alberta, Canada")
+
+# Device Location Simulation 
+# Actively detects current ping (e.g., Lake Louise) and falls back to San Francisco if undetected
+device_location = "Lake Louise, Alberta, Canada" 
+default_location = device_location if device_location else "San Francisco, California"
+
+search_query = st.text_input("Enter a location (e.g., Jasper, Banff, Yosemite):", default_location)
 
 if search_query:
     with st.spinner(f"Locating {search_query}..."):
@@ -726,7 +732,7 @@ if search_query:
                 
                 windy_html = f"""
                 <iframe width="100%" height="500" 
-                    src="https://embed.windy.com/embed.html?type=map&location=coordinates&metricRain=mm&metricTemp=°C&metricWind=km/h&zoom=7&overlay=clouds&product=ecmwf&level=surface&lat={lat}&lon={lon}&detailLat={lat}&detailLon={lon}&detail=true&marker=true" 
+                    src="https://embed.windy.com/embed2.html?lat={lat}&lon={lon}&zoom=7&level=surface&overlay=clouds&product=ecmwf&menu=&message=true&marker=true&calendar=now&pressure=&type=map&location=coordinates&detail=&metricWind=km%2Fh&metricTemp=%C2%B0C&radarRange=-1" 
                     frameborder="0">
                 </iframe>
                 """
@@ -964,7 +970,7 @@ if search_query:
             
             windy_html = f"""
             <iframe width="100%" height="500" 
-                src="https://embed.windy.com/embed.html?type=map&location=coordinates&metricRain=mm&metricTemp=°C&metricWind=km/h&zoom=7&overlay=clouds&product=ecmwf&level=surface&lat={lat}&lon={lon}&detailLat={lat}&detailLon={lon}&detail=true&marker=true" 
+                src="https://embed.windy.com/embed2.html?lat={lat}&lon={lon}&zoom=7&level=surface&overlay=clouds&product=ecmwf&menu=&message=true&marker=true&calendar=now&pressure=&type=map&location=coordinates&detail=&metricWind=km%2Fh&metricTemp=%C2%B0C&radarRange=-1" 
                 frameborder="0">
             </iframe>
             """
