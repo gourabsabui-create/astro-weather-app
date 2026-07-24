@@ -13,7 +13,7 @@ st.set_page_config(page_title="Light & Fog Predictor", page_icon="🏔️", layo
 st.title("🏔️ Landscape & Astro Forecaster")
 st.caption("Multi-model consensus | Celestial Tracking | Live Ground Sensors")
 
-WAQI_TOKEN = "ee0ee12bcf2cf2da796899543b1d0f91d20e3c7a" # Replace with a free token from aqicn.org if you hit rate limits
+WAQI_TOKEN = "ee0ee12bcf2cf2da796899543b1d0f91d20e3c7a" 
 STORMGLASS_TOKEN = "41a49954-877a-11f1-bcd5-0242ac120004-41a499e0-877a-11f1-bcd5-0242ac120004" 
 
 # --- CACHED API FUNCTIONS (OFFLINE MODE FAILSAFE) ---
@@ -102,9 +102,10 @@ def fetch_aq_grid(lat_str, lon_str):
     except:
         return None
 
+# CACHE FIX: Passing the token as an argument forces Streamlit to rebuild the cache if the token changes
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_tides(lat, lon):
-    if STORMGLASS_TOKEN == "demo":
+def fetch_tides(lat, lon, token):
+    if token == "demo":
         return "demo"
     try:
         start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -115,7 +116,7 @@ def fetch_tides(lat, lon):
             'start': start.isoformat(),
             'end': end.isoformat()
         }
-        headers = {'Authorization': STORMGLASS_TOKEN}
+        headers = {'Authorization': token}
         res = requests.get("https://api.stormglass.io/v2/tide/extremes/point", params=payload, headers=headers, timeout=5).json()
         return res.get('data', [])
     except:
@@ -313,7 +314,6 @@ if search_query:
         lon = location_options[selected_loc]["lon"]
         tz = location_options[selected_loc]["tz"]
         
-        # --- NEW OPT-IN TOGGLE FOR API CONSERVATION ---
         fetch_tides_toggle = st.checkbox("🌊 Fetch Coastal Tide Data (Consumes 1 Stormglass API Call)", value=False)
 
         with st.spinner('Loading marine and atmospheric data...'):
@@ -321,8 +321,8 @@ if search_query:
             aq_data = fetch_air_quality(lat, lon, tz)
             live_aqi, live_station = fetch_waqi_live(lat, lon)
             
-            # Conditionally fetch tides based on the toggle to save free-tier limits
-            tide_data = fetch_tides(lat, lon) if fetch_tides_toggle else None
+            # Passing STORMGLASS_TOKEN explicitly so Streamlit breaks the cache appropriately
+            tide_data = fetch_tides(lat, lon, STORMGLASS_TOKEN) if fetch_tides_toggle else None
 
         st.divider()
 
