@@ -102,14 +102,14 @@ def fetch_aq_grid(lat_str, lon_str):
     except:
         return None
 
-# CACHE FIX: Passing the token as an argument forces Streamlit to rebuild the cache if the token changes
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_tides(lat, lon, token):
     if token == "demo":
         return "demo"
     try:
-        start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-        end = start + timedelta(days=3)
+        # Fetch 3 full days of data centered roughly around the current request time
+        start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+        end = start + timedelta(days=4)
         payload = {
             'lat': lat,
             'lng': lon,
@@ -321,7 +321,6 @@ if search_query:
             aq_data = fetch_air_quality(lat, lon, tz)
             live_aqi, live_station = fetch_waqi_live(lat, lon)
             
-            # Passing STORMGLASS_TOKEN explicitly so Streamlit breaks the cache appropriately
             tide_data = fetch_tides(lat, lon, STORMGLASS_TOKEN) if fetch_tides_toggle else None
 
         st.divider()
@@ -442,30 +441,60 @@ if search_query:
 
                 # --- COASTAL TIDE ANALYSIS UI ---
                 st.divider()
-                st.subheader("🌊 Coastal Tide Extremes")
+                st.subheader("🌊 Coastal Tide Context")
                 if not fetch_tides_toggle:
                     st.info("⏸️ **Tide Tracker Paused:** Check the 'Fetch Coastal Tide Data' box at the top of the app to consume an API call and load tide times.")
                 elif tide_data == "demo":
                     st.info("💡 **Tide Tracker Inactive:** To track high/low tide times for coastal reflections and sea stacks, replace `STORMGLASS_TOKEN` at the top of the script with a free API key from stormglass.io.")
                 elif isinstance(tide_data, list) and len(tide_data) > 0:
-                    target_date = dt.date()
-                    daily_tides = []
+                    
+                    # Convert the string target time into a robust localized Pandas Timestamp
+                    target_dt = pd.Timestamp(dt)
+                    if target_dt.tzinfo is None:
+                        target_dt = target_dt.tz_localize(tz)
+                    else:
+                        target_dt = target_dt.tz_convert(tz)
+                        
+                    parsed_tides = []
                     for t in tide_data:
                         try:
                             t_time = pd.to_datetime(t['time']).tz_convert(tz)
-                            if t_time.date() == target_date:
-                                daily_tides.append((t_time, t['type'], t['height']))
+                            parsed_tides.append((t_time, t['type'], t['height']))
                         except:
                             continue
+                            
+                    parsed_tides.sort(key=lambda x: x[0])
                     
-                    if daily_tides:
-                        t_cols = st.columns(len(daily_tides))
-                        for i, (t_time, t_type, t_height) in enumerate(daily_tides):
-                            icon = "🔼 High Tide" if t_type == "high" else "🔽 Low Tide"
+                    # Find chronologically surrounding tides instead of strict calendar matching
+                    past_tides = [t for t in parsed_tides if t[0] < target_dt]
+                    future_tides = [t for t in parsed_tides if t[0] >= target_dt]
+                    
+                    display_tides = []
+                    if past_tides:
+                        display_tides.append(past_tides[-1]) # The immediate prior tide
+                    display_tides.extend(future_tides[:3]) # The next three tides
+                    
+                    if display_tides:
+                        t_cols = st.columns(len(display_tides))
+                        for i, (t_time, t_type, t_height) in enumerate(display_tides):
+                            icon = "🔼 High" if t_type == "high" else "🔽 Low"
                             t_height_ft = round(t_height * 3.28084, 1)
-                            t_cols[i].metric(icon, t_time.strftime("%I:%M %p"), f"{round(t_height, 2)}m ({t_height_ft}ft)")
+                            
+                            # Calculate exactly how many hours apart the tide is from the shoot
+                            delta_hrs = (t_time - target_dt).total_seconds() / 3600
+                            if delta_hrs < 0:
+                                rel_str = f"{-delta_hrs:.1f}h before"
+                            else:
+                                rel_str = f"+{delta_hrs:.1f}h after"
+                                
+                            t_cols[i].metric(
+                                f"{icon} ({t_time.strftime('%a %I:%M %p')})", 
+                                f"{round(t_height, 2)}m", 
+                                f"{t_height_ft}ft | {rel_str}", 
+                                delta_color="off"
+                            )
                     else:
-                        st.info("No extreme tide events detected for this specific window.")
+                        st.info("No extreme tide events detected around this time window.")
                 else:
                     st.info("No tidal data available for this location (likely an inland elevation).")
                             
@@ -719,30 +748,57 @@ if search_query:
 
             # --- COASTAL TIDE ANALYSIS UI (ASTRO) ---
             st.divider()
-            st.subheader("🌊 Coastal Tide Extremes")
+            st.subheader("🌊 Coastal Tide Context")
             if not fetch_tides_toggle:
                 st.info("⏸️ **Tide Tracker Paused:** Check the 'Fetch Coastal Tide Data' box at the top of the app to consume an API call and load tide times.")
             elif tide_data == "demo":
                 st.info("💡 **Tide Tracker Inactive:** To track high/low tide times for coastal reflections and sea stacks, replace `STORMGLASS_TOKEN` at the top of the script with a free API key from stormglass.io.")
             elif isinstance(tide_data, list) and len(tide_data) > 0:
-                target_date = dt.date()
-                daily_tides = []
+                
+                target_dt = pd.Timestamp(dt)
+                if target_dt.tzinfo is None:
+                    target_dt = target_dt.tz_localize(tz)
+                else:
+                    target_dt = target_dt.tz_convert(tz)
+                    
+                parsed_tides = []
                 for t in tide_data:
                     try:
                         t_time = pd.to_datetime(t['time']).tz_convert(tz)
-                        if t_time.date() == target_date:
-                            daily_tides.append((t_time, t['type'], t['height']))
+                        parsed_tides.append((t_time, t['type'], t['height']))
                     except:
                         continue
+                        
+                parsed_tides.sort(key=lambda x: x[0])
                 
-                if daily_tides:
-                    t_cols = st.columns(len(daily_tides))
-                    for i, (t_time, t_type, t_height) in enumerate(daily_tides):
-                        icon = "🔼 High Tide" if t_type == "high" else "🔽 Low Tide"
+                past_tides = [t for t in parsed_tides if t[0] < target_dt]
+                future_tides = [t for t in parsed_tides if t[0] >= target_dt]
+                
+                display_tides = []
+                if past_tides:
+                    display_tides.append(past_tides[-1])
+                display_tides.extend(future_tides[:3]) 
+                
+                if display_tides:
+                    t_cols = st.columns(len(display_tides))
+                    for i, (t_time, t_type, t_height) in enumerate(display_tides):
+                        icon = "🔼 High" if t_type == "high" else "🔽 Low"
                         t_height_ft = round(t_height * 3.28084, 1)
-                        t_cols[i].metric(icon, t_time.strftime("%I:%M %p"), f"{round(t_height, 2)}m ({t_height_ft}ft)")
+                        
+                        delta_hrs = (t_time - target_dt).total_seconds() / 3600
+                        if delta_hrs < 0:
+                            rel_str = f"{-delta_hrs:.1f}h before"
+                        else:
+                            rel_str = f"+{delta_hrs:.1f}h after"
+                            
+                        t_cols[i].metric(
+                            f"{icon} ({t_time.strftime('%a %I:%M %p')})", 
+                            f"{round(t_height, 2)}m", 
+                            f"{t_height_ft}ft | {rel_str}", 
+                            delta_color="off"
+                        )
                 else:
-                    st.info("No extreme tide events detected for this specific window.")
+                    st.info("No extreme tide events detected around this time window.")
             else:
                 st.info("No tidal data available for this location (likely an inland elevation).")
 
