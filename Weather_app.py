@@ -15,21 +15,31 @@ WAQI_TOKEN = "ee0ee12bcf2cf2da796899543b1d0f91d20e3c7a"
 STORMGLASS_TOKEN = "41a49954-877a-11f1-bcd5-0242ac120004-41a499e0-877a-11f1-bcd5-0242ac120004" 
 
 # --- CACHED API FUNCTIONS (OFFLINE MODE FAILSAFE) ---
+
+# UPGRADED GEOCODER: Swapped to Open-Meteo to prevent OpenStreetMap rate-limiting
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_geocoding(query):
     try:
-        headers = {"User-Agent": "LandscapeAstroForecaster/1.0"}
-        payload = {"q": query, "format": "json", "limit": 10}
-        res = requests.get("https://nominatim.openstreetmap.org/search", params=payload, headers=headers, timeout=5).json()
+        payload = {"name": query, "count": 10, "language": "en", "format": "json"}
+        res = requests.get("https://geocoding-api.open-meteo.com/v1/search", params=payload, timeout=5).json()
         
-        if res:
+        if res and "results" in res:
             formatted_results = []
-            for loc in res:
+            for loc in res["results"]:
+                # Build a clean display name (e.g., "San Francisco, California, United States")
+                parts = [loc.get("name")]
+                if "admin1" in loc and loc["admin1"] != loc.get("name"):
+                    parts.append(loc["admin1"])
+                if "country" in loc:
+                    parts.append(loc["country"])
+                
+                display_name = ", ".join(filter(None, parts))
+                
                 formatted_results.append({
-                    "name": loc.get("display_name"),
-                    "latitude": float(loc.get("lat")),
-                    "longitude": float(loc.get("lon")),
-                    "timezone": "auto"
+                    "name": display_name,
+                    "latitude": float(loc.get("latitude")),
+                    "longitude": float(loc.get("longitude")),
+                    "timezone": loc.get("timezone", "auto") # Open-Meteo natively returns precise IANA timezones!
                 })
             return {"results": formatted_results}
         return None
@@ -449,7 +459,6 @@ if lat is not None and lon is not None and tz is not None:
         tab_map, tab_details, tab_clouds = st.tabs(["🗺️ Radar Map", "📊 Forecast Details", "☁️ Live Clouds"])
         
         with tab_map:
-            # Top-level summary right above the map
             if ensemble_results:
                 avg_pot = round(sum(m["potential"] for m in ensemble_results) / len(ensemble_results))
                 avg_skunk = round(sum(m["skunk"] for m in ensemble_results) / len(ensemble_results))
@@ -613,7 +622,6 @@ if lat is not None and lon is not None and tz is not None:
             st.write("Ensure exact window remains clear of incoming cloud banks.")
             windy_html = f'<iframe width="100%" height="500" src="https://embed.windy.com/embed2.html?lat={lat}&lon={lon}&zoom=7&level=surface&overlay=clouds&product=ecmwf&menu=&message=true&marker=true&calendar=now&pressure=&type=map&location=coordinates&detail=&metricWind=km%2Fh&metricTemp=%C2%B0C&radarRange=-1" frameborder="0"></iframe>'
             components.html(windy_html, height=500)
-
 
     # ==========================================
     # MODE 2: ASTROPHOTOGRAPHY
