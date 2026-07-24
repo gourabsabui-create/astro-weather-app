@@ -115,10 +115,6 @@ def aqi_to_pm25(aqi):
 
 # --- EXACT GRANULAR FOG / MARINE LAYER ENGINE ---
 def estimate_inversion_height(weather_data, idx):
-    """
-    Interpolates the exact thermal center of mass of the inversion 
-    to pinpoint the true fog ceiling down to the meter.
-    """
     try:
         levels = [(100, "temperature_1000hPa"), (300, "temperature_975hPa"), (500, "temperature_950hPa"), 
                   (800, "temperature_925hPa"), (1000, "temperature_900hPa"), (1500, "temperature_850hPa")]
@@ -376,7 +372,6 @@ if search_query:
                 interactive_map = st.radio("Do you want an interactive map?", ["Yes (Zoom & Pan)", "No (Static Map)"], horizontal=True)
                 is_interactive = (interactive_map == "Yes (Zoom & Pan)")
                 
-                # --- DYNAMIC HEAT RADIUS ADDED HERE ---
                 step_dict = {"Micro (~20km)": 0.02, "Local (~45km)": 0.04, "Regional (~90km)": 0.08, "Macro (~160km)": 0.15}
                 zoom_dict = {"Micro (~20km)": 9.5, "Local (~45km)": 8.5, "Regional (~90km)": 7.5, "Macro (~160km)": 6.5}
                 heat_radius_dict = {"Micro (~20km)": 150, "Local (~45km)": 100, "Regional (~90km)": 75, "Macro (~160km)": 55}
@@ -412,6 +407,8 @@ if search_query:
                     
                     if grid_res:
                         map_data = []
+                        max_decay_dist = (grid_size / 2) * step
+                        
                         for i, c in enumerate(coords):
                             try:
                                 loc_w = grid_res[i] if isinstance(grid_res, list) else grid_res
@@ -422,7 +419,12 @@ if search_query:
                                 aq_idx = loc_aq["hourly"]["time"].index(closest_hour_str) if loc_aq and "hourly" in loc_aq and closest_hour_str in loc_aq["hourly"].get("time", []) else 0
                                 
                                 grid_pm25 = safe_val(loc_aq, "pm2_5", aq_idx) if loc_aq else 0
-                                if is_override: grid_pm25 = max(grid_pm25, active_pm25)
+                                
+                                # --- SMOKE GRADIENT FIX (SPATIAL DECAY) ---
+                                if is_override: 
+                                    dist_deg = math.sqrt((c[0] - lat)**2 + (c[1] - lon)**2)
+                                    decay_factor = max(0.3, 1.0 - (dist_deg / max_dist)) 
+                                    grid_pm25 = max(grid_pm25, active_pm25 * decay_factor)
 
                                 l_low = safe_val(loc_w, "cloud_cover_low", idx)
                                 l_mid = safe_val(loc_w, "cloud_cover_mid", idx)
@@ -433,6 +435,10 @@ if search_query:
                                 skunk = round(min(100, max(max(0, (l_low - 50) * 2.0), max(0, (opaque_deck - 70) * 3.0) if opaque_deck > 70 else 0)))
                                 
                                 inv_dt_grid, inv_alt_grid = estimate_inversion_height(loc_w, idx)
+                                
+                                # --- FOG GRADIENT FIX (DYNAMIC WEIGHTING) ---
+                                fog_intensity = min(100, inv_dt_grid * 20) if inv_dt_grid > 0 else 0
+                                
                                 if inv_dt_grid > 0:
                                     inv_alt_ft_grid = round(inv_alt_grid * 3.28084)
                                     fog_details = f"{inv_alt_grid}m ({inv_alt_ft_grid:,} ft) [+{inv_dt_grid}°C]"
@@ -448,7 +454,7 @@ if search_query:
                                     "cloud_low": l_low,
                                     "cloud_mid": l_mid,
                                     "cloud_high": l_high,
-                                    "fog_weight": 100 if inv_dt_grid > 0 else 0,
+                                    "fog_weight": fog_intensity,
                                     "fog_text": fog_details
                                 })
                             except: continue
@@ -456,7 +462,6 @@ if search_query:
                         df_map = pd.DataFrame(map_data)
                         layers = []
 
-                        # --- HEATMAP LAYERS NOW USE DYNAMIC heat_radius ---
                         if show_burn and not df_map[df_map['potential'] > 0].empty:
                             layers.append(pdk.Layer(
                                 'HeatmapLayer',
