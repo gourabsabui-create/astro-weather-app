@@ -113,35 +113,47 @@ def aqi_to_pm25(aqi):
     elif aqi <= 200: return 55.4 + (aqi - 150) * (95.0 / 50.0)
     else: return 150.4 + (aqi - 200) * (100.0 / 100.0)
 
-# --- GRANULAR FOG / MARINE LAYER ENGINE ---
+# --- EXACT GRANULAR FOG / MARINE LAYER ENGINE ---
 def estimate_inversion_height(weather_data, idx):
     """
-    Slices the atmosphere across 6 pressure levels to find the exact top 
-    of the temperature inversion (where the fog/marine layer stops).
+    Interpolates the exact thermal center of mass of the inversion 
+    to pinpoint the true fog ceiling down to the meter.
     """
     try:
-        levels = {
-            100: "temperature_1000hPa",
-            300: "temperature_975hPa",
-            500: "temperature_950hPa",
-            800: "temperature_925hPa",
-            1000: "temperature_900hPa",
-            1500: "temperature_850hPa"
-        }
-        surface_temp = safe_val(weather_data, "temperature_1000hPa", idx)
-        max_temp = surface_temp
-        max_alt = 100
+        levels = [(100, "temperature_1000hPa"), (300, "temperature_975hPa"), (500, "temperature_950hPa"), 
+                  (800, "temperature_925hPa"), (1000, "temperature_900hPa"), (1500, "temperature_850hPa")]
         
-        for alt, key in levels.items():
+        surface_temp = safe_val(weather_data, levels[0][1], idx)
+        peak_temp = surface_temp
+        peak_alt = 100
+        
+        # 1. Find the absolute peak of the thermal inversion
+        for alt, key in levels:
             t = safe_val(weather_data, key, idx)
-            if t > max_temp:
-                max_temp = t
-                max_alt = alt
+            if t > peak_temp:
+                peak_temp = t
+                peak_alt = alt
                 
-        delta_t = round(max_temp - surface_temp, 1)
-        return delta_t, max_alt
+        delta_t = round(peak_temp - surface_temp, 1)
+        
+        # 2. Interpolate the exact ceiling (steepest gradient point)
+        if delta_t > 0:
+            lower_alt, lower_temp = 100, surface_temp
+            for alt, key in levels:
+                if alt == peak_alt:
+                    break
+                lower_alt = alt
+                lower_temp = safe_val(weather_data, key, idx)
+            
+            if peak_temp > lower_temp:
+                weight = (peak_temp - lower_temp) / delta_t if delta_t > 0 else 0.5
+                exact_ceiling = int(lower_alt + ((peak_alt - lower_alt) * weight))
+                return delta_t, exact_ceiling
+            return delta_t, peak_alt
+            
+        return 0, 0
     except:
-        return 0, 100
+        return 0, 0
 
 # --- UNIFIED CELESTIAL MATH ENGINE (100% OFFLINE) ---
 def get_celestial_az_alt(lat, lon, local_time, tz_string, target="galactic_core"):
@@ -326,7 +338,8 @@ if search_query:
                     inv_dt, inv_alt = estimate_inversion_height(base_data, baseline_idx)
                     if inv_dt > 0:
                         inv_alt_ft = round(inv_alt * 3.28084)
-                        c3.metric("🌫️ FOG / MARINE LAYER", f"Below ~{inv_alt}m ({inv_alt_ft:,} ft)", f"+{inv_dt}°C ΔT", delta_color="inverse")
+                        # Re-structured to fit gracefully inside standard UI bounds
+                        c3.metric("🌫️ FOG CEILING", f"{inv_alt} m", f"↑ {inv_alt_ft:,} ft | +{inv_dt}°C ΔT", delta_color="inverse")
                     else:
                         c3.metric("🌫️ FOG RISK", "Low", "No Inversion", delta_color="normal")
                     
@@ -405,16 +418,16 @@ if search_query:
                                 potential = round(max(0, min(100, ((l_mid * 0.48) + (max(l_high, max(0, safe_val(loc_w, "relative_humidity_300hPa", idx) - 50)) * 1.15 * (1.0 - max(0, min(1.0, (opaque_deck - 45) / 45))))))))
                                 skunk = round(min(100, max(max(0, (l_low - 50) * 2.0), max(0, (opaque_deck - 70) * 3.0) if opaque_deck > 70 else 0)))
                                 
-                                # GRANULAR MAP FOG CALCULATIONS
                                 inv_dt_grid, inv_alt_grid = estimate_inversion_height(loc_w, idx)
                                 if inv_dt_grid > 0:
                                     inv_alt_ft_grid = round(inv_alt_grid * 3.28084)
-                                    fog_details = f"Trapped < {inv_alt_grid}m ({inv_alt_ft_grid:,} ft) [+{inv_dt_grid}°C ΔT]"
+                                    fog_details = f"{inv_alt_grid}m ({inv_alt_ft_grid:,} ft) [+{inv_dt_grid}°C]"
                                 else:
-                                    fog_details = "Clear (No Inversion)"
+                                    fog_details = "Clear"
 
                                 map_data.append({
-                                    "lat": c[0], "lon": c[1],
+                                    "lat": round(c[0], 4), 
+                                    "lon": round(c[1], 4),
                                     "potential": potential,
                                     "skunk": skunk,
                                     "pm25": round(grid_pm25),
@@ -482,13 +495,13 @@ if search_query:
                             pickable=True
                         ))
 
+                        # Re-structured, shorter tooltip to prevent screen clipping
                         tooltip_html = (
-                            "<b>Coordinates:</b> {lat}, {lon}<br/>"
-                            "<b>🔥 Burn Potential:</b> {potential}/100<br/>"
-                            "<b>🦨 Skunk Chance:</b> {skunk}%<br/>"
-                            "<b>🌲 Smoke (PM 2.5):</b> {pm25} µg/m³<br/>"
-                            "<b>☁️ Clouds (Low/Mid/High):</b> {cloud_low}% / {cloud_mid}% / {cloud_high}%<br/>"
-                            "<b>🌫️ Fog / Inversion:</b> {fog_text}"
+                            "<b>Coord:</b> {lat}, {lon}<br/>"
+                            "<b>🔥 Burn:</b> {potential}/100 | <b>🦨 Skunk:</b> {skunk}%<br/>"
+                            "<b>🌲 Smoke:</b> {pm25} µg/m³<br/>"
+                            "<b>☁️ Clouds:</b> {cloud_low}% L | {cloud_mid}% M | {cloud_high}% H<br/>"
+                            "<b>🌫️ Fog Ceiling:</b> {fog_text}"
                         )
 
                         st.pydeck_chart(pdk.Deck(
