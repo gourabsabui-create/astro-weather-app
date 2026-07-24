@@ -226,7 +226,7 @@ if search_query:
                 models_to_run = {"High-Res (Local)": "best_match", "ECMWF (European)": "ecmwf_ifs", "GFS (American)": "gfs_seamless"}
                 ensemble_results = []
                 
-                aq_idx = aq_data["hourly"]["time"].index(closest_hour_str) if aq_data and closest_hour_str in aq_data.get("hourly", {}).get("time", []) else 0
+                aq_idx = aq_data["hourly"]["time"].index(closest_hour_str) if aq_data and "hourly" in aq_data and closest_hour_str in aq_data["hourly"].get("time", []) else 0
                 local_pm25 = safe_val(aq_data, "pm2_5", aq_idx) if aq_data else 0
                 
                 with st.spinner("Running Multi-Model Consensus..."):
@@ -261,7 +261,6 @@ if search_query:
                         skunk_from_smoke = max(0, (local_pm25 - 40) * 1.5)
                         skunk = round(min(100, max(max(0, (l_low - 50) * 2.0), max(0, (u_low - 40) * 1.8), max(0, (opaque_deck - 70) * 3.0) if opaque_deck > 70 else 0, skunk_from_smoke)))
                         
-                        # RESTORED DETAILED CLOUD DATA TO DICTIONARY
                         ensemble_results.append({
                             "name": model_label, "potential": potential, "skunk": skunk,
                             "total": l_total, "low": l_low, "mid": l_mid, "high": l_high, "rh": rh_300
@@ -277,23 +276,24 @@ if search_query:
                     c1.metric("🔥 CONSENSUS BURN POTENTIAL", f"{avg_pot}/100")
                     c2.metric("🦨 CONSENSUS CHANCE OF SKUNK", f"{avg_skunk}%")
                     
-                    # RESTORED EXPANDER WITH DETAILED RAW SCORES
                     with st.expander("📊 View Ensemble Breakdown (Model Agreement)"):
                         for m in ensemble_results:
                             st.markdown(f"**{m['name']}** - Potential: **{m['potential']}** | Skunk: **{m['skunk']}%**")
                             st.caption(f"Raw: Total {m['total']}% | Low {m['low']}% | Mid {m['mid']}% | High {m['high']}%")
                             
-                if local_pm25 > 10:
-                    st.divider()
-                    st.subheader("🌲 Air Quality & Wildfire Smoke")
-                    st.metric("PM 2.5 (Smoke Density)", f"{round(local_pm25)} µg/m³")
-                    
-                    if 10 < local_pm25 <= 35:
-                        st.success("🌤️ **Blood-Orange Sun Potential:** There is a light layer of smoke in the atmosphere. It shouldn't block the light, but it could dramatically enhance the reds and oranges at the horizon.")
-                    elif 35 < local_pm25 <= 60:
-                        st.warning("⚠️ **Moderate Smoke Smother:** The smoke is getting thick enough to wash out contrast and dim the burn potential.")
-                    else:
-                        st.error("🛑 **Heavy Smoke Skunk:** Wildfire smoke is very thick. The sun will likely vanish into a gray/brown haze long before it hits the horizon.")
+                # --- ALWAYS VISIBLE SMOKE TEXT BLOCK ---
+                st.divider()
+                st.subheader("🌲 Air Quality & Wildfire Smoke")
+                st.metric("PM 2.5 (Smoke Density)", f"{round(local_pm25)} µg/m³")
+                
+                if local_pm25 <= 10:
+                    st.success("✅ **Clean Air:** No significant wildfire smoke detected. The atmosphere is clear and should not impact the sunset or sky visibility.")
+                elif 10 < local_pm25 <= 35:
+                    st.info("🌤️ **Blood-Orange Sun Potential:** There is a light layer of smoke in the atmosphere. It shouldn't block the light, but it could dramatically enhance the reds and oranges at the horizon.")
+                elif 35 < local_pm25 <= 60:
+                    st.warning("⚠️ **Moderate Smoke Smother:** The smoke is getting thick enough to wash out contrast and dim the burn potential.")
+                else:
+                    st.error("🛑 **Heavy Smoke Skunk:** Wildfire smoke is very thick. The sun will likely vanish into a gray/brown haze long before it hits the horizon.")
 
                 st.divider()
                 st.subheader("🗺️ High-Resolution Regional Overlay")
@@ -354,7 +354,7 @@ if search_query:
 
                         df_map = pd.DataFrame(map_data)
                         st.pydeck_chart(pdk.Deck(
-                            map_style='dark', # UPDATED TO OPEN-SOURCE CARTO
+                            map_style='dark',
                             initial_view_state=pdk.ViewState(latitude=lat, longitude=lon, zoom=7.5, pitch=0),
                             layers=[
                                 pdk.Layer('ScatterplotLayer', data=df_map, get_position='[lon, lat]', get_color='burn_color', get_radius=5000),
@@ -389,16 +389,22 @@ if search_query:
                 t_100m = safe_val(base_data, "temperature_1000hPa", baseline_idx)
                 t_1500m = safe_val(base_data, "temperature_850hPa", baseline_idx)
                 
+                # Extract PM 2.5 for Astro Mode
+                aq_idx = aq_data["hourly"]["time"].index(closest_hour_str) if aq_data and "hourly" in aq_data and closest_hour_str in aq_data["hourly"].get("time", []) else 0
+                local_pm25 = safe_val(aq_data, "pm2_5", aq_idx) if aq_data else 0
+                
                 seeing_quality = "Poor 🔴 (Turbulent)"
                 if t_1500m > t_100m:
                     seeing_quality = "Excellent 🟢 (Stable Inversion)"
                 elif (t_100m - t_1500m) < 5:
                     seeing_quality = "Good 🟡 (Moderate Stability)"
                     
-                col1, col2, col3 = st.columns(3)
+                # Upgraded to 4 columns to include Smoke tracking
+                col1, col2, col3, col4 = st.columns(4)
                 col1.metric("Cloud Cover", f"{total_clouds}%", delta="Clear" if total_clouds < 15 else "Obscured", delta_color="inverse")
-                col2.metric("High Altitude Haze", f"{high_clouds}%")
+                col2.metric("High Altitude", f"{high_clouds}%")
                 col3.metric("Atmospheric Seeing", seeing_quality.split(" ")[0])
+                col4.metric("PM 2.5 (Smoke)", f"{round(local_pm25)} µg/m³", delta="Clear Air" if local_pm25 <= 10 else "Haze/Smoke", delta_color="inverse")
             else:
                 st.info("Weather predictions are currently unavailable for this date (outside the 14-day window or fully offline), but mathematical celestial tracking remains active.")
 
