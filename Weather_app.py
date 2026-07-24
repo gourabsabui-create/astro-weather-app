@@ -36,10 +36,63 @@ def save_location_to_cache(name, lat, lon, tz):
     except Exception:
         pass
 
+# --- DYNAMIC STREAMLIT CUSTOM COMPONENT (GPS SENSOR) ---
+# This safely bridges JavaScript hardware GPS directly into Python variables without URL hacks
+def build_gps_component():
+    if not os.path.exists("gps_component"):
+        os.mkdir("gps_component")
+    with open("gps_component/index.html", "w") as f:
+        f.write("""<!DOCTYPE html>
+        <html>
+        <head>
+            <script>
+                function sendMessageToStreamlitClient(type, data) {
+                    var outData = Object.assign({isStreamlitMessage: true, type: type}, data);
+                    window.parent.postMessage(outData, "*");
+                }
+                function init() {
+                    sendMessageToStreamlitClient("streamlit:componentReady", {apiVersion: 1});
+                }
+                function setFrameHeight() {
+                    sendMessageToStreamlitClient("streamlit:setFrameHeight", {height: 120});
+                }
+                function setComponentValue(value) {
+                    sendMessageToStreamlitClient("streamlit:setComponentValue", {value: value});
+                }
+                window.addEventListener("message", function(event) {
+                    if (event.data.type === "streamlit:render") { setFrameHeight(); }
+                });
+                function getLocation() {
+                    var x = document.getElementById("status");
+                    x.innerHTML = "<i>Pinging satellites... Allow location access if prompted.</i>";
+                    if (navigator.geolocation) {
+                        navigator.geolocation.getCurrentPosition(
+                            function(position) {
+                                var lat = position.coords.latitude.toFixed(5);
+                                var lon = position.coords.longitude.toFixed(5);
+                                x.innerHTML = "✅ GPS Lock Acquired!";
+                                setComponentValue({lat: lat, lon: lon});
+                            },
+                            function(error) { x.innerHTML = "❌ Error: " + error.message; },
+                            {enableHighAccuracy: true, timeout: 10000, maximumAge: 0}
+                        );
+                    } else { x.innerHTML = "Geolocation not supported."; }
+                }
+                window.onload = init;
+            </script>
+        </head>
+        <body style="font-family: sans-serif; margin: 0; padding: 0;">
+            <button onclick="getLocation()" style="background-color: #4CAF50; color: white; padding: 10px 15px; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; width: 100%;">📍 Auto-Feed Current GPS</button>
+            <p id="status" style="margin-top: 15px; font-size: 14px; font-weight: bold; color: #888; text-align: center;"></p>
+        </body>
+        </html>""")
+
+build_gps_component()
+gps_locator = components.declare_component("gps_locator", path="gps_component")
+
 # --- DUAL-ENGINE GEOCODER (OpenStreetMap + Open-Meteo Fallback) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_geocoding(query):
-    # Engine 1: OpenStreetMap (Excellent for remote trailheads, lakes, parks)
     try:
         headers = {"User-Agent": "AstroFieldApp_Mobile/2.0 (contact@example.com)"}
         payload = {"q": query, "format": "json", "limit": 5}
@@ -50,7 +103,6 @@ def fetch_geocoding(query):
     except Exception:
         pass
 
-    # Engine 2: Open-Meteo Fallback (Excellent for major cities like Chicago to bypass OSM rate limits)
     try:
         payload = {"name": query, "count": 5, "language": "en", "format": "json"}
         res_meteo = requests.get("https://geocoding-api.open-meteo.com/v1/search", params=payload, timeout=5).json()
@@ -329,22 +381,13 @@ def create_vector_line(lat, lon, azimuth, length_deg, color):
     end_lon = lon + length_deg * math.sin(math.radians(azimuth)) / math.cos(math.radians(lat))
     return {"start_lon": lon, "start_lat": lat, "end_lon": end_lon, "end_lat": end_lat, "color": color}
 
-# --- CHECK FOR INCOMING URL GPS PARAMETERS ---
-query_params = st.query_params
-has_gps_url = "gps_lat" in query_params and "gps_lon" in query_params
-
 # --- MOBILE COMPACT SIDEBAR UI ---
 with st.sidebar:
     st.title("⚙️ Setup & Location")
     mode = st.radio("Dashboard Mode:", ["🌅 Sunrise & Sunset", "🌌 Astrophotography"])
     st.divider()
     
-    # Automatically switch to the GPS tab if the URL parameter hack triggered
-    input_method = st.radio(
-        "Location Entry:", 
-        ["🔍 Online Search", "📂 Saved Spots (Offline Storage)", "🛰️ Live GPS Sensor"],
-        index=2 if has_gps_url else 0
-    )
+    input_method = st.radio("Location Entry:", ["🔍 Online Search", "📂 Saved Spots (Offline Storage)", "🛰️ Live GPS Sensor"])
     
     lat, lon, tz = None, None, None
     cached_db = load_saved_locations()
@@ -385,57 +428,18 @@ with st.sidebar:
             st.warning("No spots cached in local storage yet. Search a few locations while online first!")
             
     elif input_method == "🛰️ Live GPS Sensor":
-        if has_gps_url:
-            lat = float(query_params["gps_lat"])
-            lon = float(query_params["gps_lon"])
+        st.info("Tap below to activate your phone's hardware GPS. It will automatically detect your coordinates and feed them to the app.")
+        
+        # The custom component automatically returns a dictionary when setComponentValue is called in JS
+        gps_data = gps_locator()
+        
+        if gps_data:
+            lat = float(gps_data["lat"])
+            lon = float(gps_data["lon"])
             tz = "auto"
             st.success(f"✅ GPS Lock Acquired: {lat}, {lon}")
-            
-            if st.button("❌ Clear GPS Lock & Search Manually"):
-                st.query_params.clear()
-                st.rerun()
-        else:
-            st.info("Tap below to ask your phone's hardware GPS chip for your exact coordinates. The app will generate a secure link to load your spot!")
-            
-            # --- THE SANDBOX ESCAPE HACK ---
-            # Instead of forcing a redirect, it generates an <a> tag button. 
-            # The browser allows the user-initiated click to pass the data to the parent window seamlessly!
-            gps_html = """
-            <div style="font-family: sans-serif; color: white; text-align: center;">
-                <button id="ping-btn" onclick="getLocation()" style="background-color: #4CAF50; color: white; padding: 10px 15px; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; width: 100%;">📍 Ping GPS Satellites</button>
-                <p id="gps-data" style="margin-top: 15px; font-size: 14px; font-weight: bold;"></p>
-                <div id="link-container"></div>
-            </div>
-            <script>
-            function getLocation() {
-                var x = document.getElementById("gps-data");
-                var btn = document.getElementById("ping-btn");
-                btn.style.display = "none";
-                x.innerHTML = "<i>Pinging satellites... Allow location access if prompted.</i>";
-                
-                if (navigator.geolocation) {
-                    navigator.geolocation.getCurrentPosition(function(position) {
-                        var lat = position.coords.latitude.toFixed(5);
-                        var lon = position.coords.longitude.toFixed(5);
-                        x.innerHTML = "✅ GPS Lock Acquired: " + lat + ", " + lon;
-                        
-                        var link = document.createElement("a");
-                        link.href = "?gps_lat=" + lat + "&gps_lon=" + lon;
-                        link.target = "_parent"; 
-                        link.innerHTML = "<button style='background-color: #008CBA; color: white; padding: 10px 15px; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; width: 100%; margin-top: 10px;'>🚀 Load Map with GPS</button>";
-                        
-                        document.getElementById("link-container").appendChild(link);
-                    }, function(error) {
-                        x.innerHTML = "❌ Error: " + error.message;
-                        btn.style.display = "block";
-                    }, {enableHighAccuracy: true, timeout: 10000, maximumAge: 0});
-                } else {
-                    x.innerHTML = "Geolocation not supported.";
-                }
-            }
-            </script>
-            """
-            components.html(gps_html, height=180)
+            # Automatically log the GPS coordinates into the saved spots directory
+            save_location_to_cache(f"GPS Spot ({lat}, {lon})", lat, lon, tz)
         
     st.divider()
     fetch_tides_toggle = st.checkbox("🌊 Fetch Coastal Tides", value=False, help="Consumes 1 Stormglass API Call")
