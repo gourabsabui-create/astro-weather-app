@@ -14,6 +14,7 @@ st.title("🏔️ Landscape & Astro Forecaster")
 st.caption("Multi-model consensus | Celestial Tracking | Live Ground Sensors")
 
 WAQI_TOKEN = "demo" # Replace with a free token from aqicn.org if you hit rate limits
+STORMGLASS_TOKEN = "demo" # Replace with a free token from stormglass.io for global tide data
 
 # --- CACHED API FUNCTIONS (OFFLINE MODE FAILSAFE) ---
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -100,6 +101,25 @@ def fetch_aq_grid(lat_str, lon_str):
         return requests.get("https://air-quality-api.open-meteo.com/v1/air-quality", params=p_aq_grid, timeout=10).json()
     except:
         return None
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_tides(lat, lon):
+    if STORMGLASS_TOKEN == "demo":
+        return "demo"
+    try:
+        start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=3)
+        payload = {
+            'lat': lat,
+            'lng': lon,
+            'start': start.isoformat(),
+            'end': end.isoformat()
+        }
+        headers = {'Authorization': STORMGLASS_TOKEN}
+        res = requests.get("https://api.stormglass.io/v2/tide/extremes/point", params=payload, headers=headers, timeout=5).json()
+        return res.get('data', [])
+    except:
+        return []
 
 def safe_val(data, key, i):
     try:
@@ -293,10 +313,11 @@ if search_query:
         lon = location_options[selected_loc]["lon"]
         tz = location_options[selected_loc]["tz"]
 
-        with st.spinner('Loading atmospheric data...'):
+        with st.spinner('Loading marine and atmospheric data...'):
             base_data = fetch_weather(lat, lon, tz)
             aq_data = fetch_air_quality(lat, lon, tz)
             live_aqi, live_station = fetch_waqi_live(lat, lon)
+            tide_data = fetch_tides(lat, lon)
 
         st.divider()
 
@@ -413,6 +434,33 @@ if search_query:
                         for m in ensemble_results:
                             st.markdown(f"**{m['name']}** - Potential: **{m['potential']}** | Skunk: **{m['skunk']}%**")
                             st.caption(f"Raw: Total {m['total']}% | Low {m['low']}% | Mid {m['mid']}% | High {m['high']}%")
+
+                # --- COASTAL TIDE ANALYSIS UI ---
+                st.divider()
+                st.subheader("🌊 Coastal Tide Extremes")
+                if tide_data == "demo":
+                    st.info("💡 **Tide Tracker Inactive:** To track high/low tide times for coastal reflections and sea stacks, replace `STORMGLASS_TOKEN` at the top of the script with a free API key from stormglass.io.")
+                elif isinstance(tide_data, list) and len(tide_data) > 0:
+                    target_date = dt.date()
+                    daily_tides = []
+                    for t in tide_data:
+                        try:
+                            t_time = pd.to_datetime(t['time']).tz_convert(tz)
+                            if t_time.date() == target_date:
+                                daily_tides.append((t_time, t['type'], t['height']))
+                        except:
+                            continue
+                    
+                    if daily_tides:
+                        t_cols = st.columns(len(daily_tides))
+                        for i, (t_time, t_type, t_height) in enumerate(daily_tides):
+                            icon = "🔼 High Tide" if t_type == "high" else "🔽 Low Tide"
+                            t_height_ft = round(t_height * 3.28084, 1)
+                            t_cols[i].metric(icon, t_time.strftime("%I:%M %p"), f"{round(t_height, 2)}m ({t_height_ft}ft)")
+                    else:
+                        st.info("No extreme tide events detected for this specific window.")
+                else:
+                    st.info("No tidal data available for this location (likely an inland elevation).")
                             
                 st.divider()
                 st.subheader("🌲 Air Quality & Wildfire Smoke")
@@ -661,6 +709,33 @@ if search_query:
                 col4.metric("PM 2.5 (Smoke)", f"{round(active_pm25)} µg/m³", delta="🚨 SENSOR OVERRIDE" if is_override else ("Clear Air" if active_pm25 <= 10 else "Haze/Smoke"), delta_color="inverse")
             else:
                 st.info("Weather predictions are currently unavailable for this date, but mathematical celestial tracking remains active.")
+
+            # --- COASTAL TIDE ANALYSIS UI (ASTRO) ---
+            st.divider()
+            st.subheader("🌊 Coastal Tide Extremes")
+            if tide_data == "demo":
+                st.info("💡 **Tide Tracker Inactive:** To track high/low tide times for coastal reflections and sea stacks, replace `STORMGLASS_TOKEN` at the top of the script with a free API key from stormglass.io.")
+            elif isinstance(tide_data, list) and len(tide_data) > 0:
+                target_date = dt.date()
+                daily_tides = []
+                for t in tide_data:
+                    try:
+                        t_time = pd.to_datetime(t['time']).tz_convert(tz)
+                        if t_time.date() == target_date:
+                            daily_tides.append((t_time, t['type'], t['height']))
+                    except:
+                        continue
+                
+                if daily_tides:
+                    t_cols = st.columns(len(daily_tides))
+                    for i, (t_time, t_type, t_height) in enumerate(daily_tides):
+                        icon = "🔼 High Tide" if t_type == "high" else "🔽 Low Tide"
+                        t_height_ft = round(t_height * 3.28084, 1)
+                        t_cols[i].metric(icon, t_time.strftime("%I:%M %p"), f"{round(t_height, 2)}m ({t_height_ft}ft)")
+                else:
+                    st.info("No extreme tide events detected for this specific window.")
+            else:
+                st.info("No tidal data available for this location (likely an inland elevation).")
 
             st.divider()
             
