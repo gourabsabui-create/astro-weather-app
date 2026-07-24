@@ -17,7 +17,22 @@ WAQI_TOKEN = "demo" # Replace with a free token from aqicn.org if you hit rate l
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_geocoding(query):
     try:
-        return requests.get(f"https://geocoding-api.open-meteo.com/v1/search?name={query}&count=10", timeout=5).json()
+        # Swapped to OpenStreetMap (Nominatim) for Landmark & Park support
+        headers = {"User-Agent": "LandscapeAstroForecaster/1.0"}
+        payload = {"q": query, "format": "json", "limit": 10}
+        res = requests.get("https://nominatim.openstreetmap.org/search", params=payload, headers=headers, timeout=5).json()
+        
+        if res:
+            formatted_results = []
+            for loc in res:
+                formatted_results.append({
+                    "name": loc.get("display_name"),
+                    "latitude": float(loc.get("lat")),
+                    "longitude": float(loc.get("lon")),
+                    "timezone": "auto"
+                })
+            return {"results": formatted_results}
+        return None
     except:
         return None
 
@@ -169,7 +184,10 @@ if search_query:
     else:
         location_options = {}
         for loc in geo_response["results"]:
-            display_name = ", ".join([p for p in [loc.get("name", ""), loc.get("admin1", ""), loc.get("country", "")] if p])
+            display_name = loc.get("name", "Unknown Location")
+            # Handle duplicate location names by appending coordinates
+            if display_name in location_options:
+                display_name += f" ({loc['latitude']}, {loc['longitude']})"
             location_options[display_name] = {"lat": loc["latitude"], "lon": loc["longitude"], "tz": loc.get("timezone", "auto")}
         
         selected_loc = st.selectbox("Select the exact location:", list(location_options.keys()))
