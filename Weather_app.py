@@ -113,37 +113,34 @@ def aqi_to_pm25(aqi):
     elif aqi <= 200: return 55.4 + (aqi - 150) * (95.0 / 50.0)
     else: return 150.4 + (aqi - 200) * (100.0 / 100.0)
 
-# --- EXACT GRANULAR FOG / MARINE LAYER ENGINE ---
+# --- UPGRADED MARINE LAYER / FOG ENGINE ---
 def estimate_inversion_height(weather_data, idx):
+    """
+    Finds the exact base of the thermal inversion to determine the accurate 
+    ceiling of the marine layer/fog deck, avoiding absolute peak overshoots.
+    """
     try:
         levels = [(100, "temperature_1000hPa"), (300, "temperature_975hPa"), (500, "temperature_950hPa"), 
                   (800, "temperature_925hPa"), (1000, "temperature_900hPa"), (1500, "temperature_850hPa")]
         
         surface_temp = safe_val(weather_data, levels[0][1], idx)
+        inversion_base_alt = 0
         peak_temp = surface_temp
-        peak_alt = 100
         
-        for alt, key in levels:
+        prev_temp = surface_temp
+        for alt, key in levels[1:]:
             t = safe_val(weather_data, key, idx)
+            # Find the altitude where the temperature first starts warming (The Fog Ceiling)
+            if t > prev_temp and inversion_base_alt == 0:
+                inversion_base_alt = alt 
             if t > peak_temp:
                 peak_temp = t
-                peak_alt = alt
+            prev_temp = t
                 
         delta_t = round(peak_temp - surface_temp, 1)
         
-        if delta_t > 0:
-            lower_alt, lower_temp = 100, surface_temp
-            for alt, key in levels:
-                if alt == peak_alt:
-                    break
-                lower_alt = alt
-                lower_temp = safe_val(weather_data, key, idx)
-            
-            if peak_temp > lower_temp:
-                weight = (peak_temp - lower_temp) / delta_t if delta_t > 0 else 0.5
-                exact_ceiling = int(lower_alt + ((peak_alt - lower_alt) * weight))
-                return delta_t, exact_ceiling
-            return delta_t, peak_alt
+        if delta_t > 0 and inversion_base_alt > 0:
+            return delta_t, inversion_base_alt
             
         return 0, 0
     except:
@@ -330,11 +327,14 @@ if search_query:
                     c2.metric("🦨 SKUNK CHANCE", f"{avg_skunk}%")
                     
                     inv_dt, inv_alt = estimate_inversion_height(base_data, baseline_idx)
-                    if inv_dt > 0:
+                    # UI FOG FIX: Require low cloud cover logic here too
+                    local_low_clouds = safe_val(base_data, "cloud_cover_low", baseline_idx)
+                    
+                    if inv_dt > 0 and local_low_clouds > 10:
                         inv_alt_ft = round(inv_alt * 3.28084)
-                        c3.metric("🌫️ FOG CEILING", f"{inv_alt} m", f"↑ {inv_alt_ft:,} ft | +{inv_dt}°C ΔT", delta_color="inverse")
+                        c3.metric("🌫️ FOG CEILING", f"~{inv_alt} m", f"↑ {inv_alt_ft:,} ft | +{inv_dt}°C ΔT", delta_color="inverse")
                     else:
-                        c3.metric("🌫️ FOG RISK", "Low", "No Inversion", delta_color="normal")
+                        c3.metric("🌫️ FOG RISK", "Low", "No Moisture/Inversion", delta_color="normal")
                     
                     with st.expander("📊 View Ensemble Breakdown (Model Agreement)"):
                         for m in ensemble_results:
@@ -420,7 +420,6 @@ if search_query:
                                 
                                 grid_pm25 = safe_val(loc_aq, "pm2_5", aq_idx) if loc_aq else 0
                                 
-                                # --- SMOKE GRADIENT FIX (SPATIAL DECAY BUG FIXED) ---
                                 if is_override: 
                                     dist_deg = math.sqrt((c[0] - lat)**2 + (c[1] - lon)**2)
                                     decay_factor = max(0.3, 1.0 - (dist_deg / max_decay_dist)) 
@@ -436,13 +435,15 @@ if search_query:
                                 
                                 inv_dt_grid, inv_alt_grid = estimate_inversion_height(loc_w, idx)
                                 
-                                fog_intensity = min(100, inv_dt_grid * 20) if inv_dt_grid > 0 else 0
-                                
-                                if inv_dt_grid > 0:
+                                # --- FOG DISTRIBUTION FIX (BIND TO MOISTURE) ---
+                                if inv_dt_grid > 0 and l_low > 5:
+                                    # Multiply the physical inversion strength by the actual presence of low clouds
+                                    fog_intensity = min(100, (l_low / 100.0) * (inv_dt_grid * 25))
                                     inv_alt_ft_grid = round(inv_alt_grid * 3.28084)
-                                    fog_details = f"{inv_alt_grid}m ({inv_alt_ft_grid:,} ft) [+{inv_dt_grid}°C]"
+                                    fog_details = f"~{inv_alt_grid}m ({inv_alt_ft_grid:,} ft) [+{inv_dt_grid}°C]"
                                 else:
-                                    fog_details = "Clear"
+                                    fog_intensity = 0
+                                    fog_details = "Clear (No Moisture/Inversion)"
 
                                 map_data.append({
                                     "lat": round(c[0], 4), 
@@ -461,7 +462,6 @@ if search_query:
                         df_map = pd.DataFrame(map_data)
                         layers = []
 
-                        # --- SAFETY CHECK ADDED HERE ---
                         if not df_map.empty:
                             if show_burn and not df_map[df_map['potential'] > 0].empty:
                                 layers.append(pdk.Layer(
