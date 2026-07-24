@@ -142,17 +142,16 @@ def estimate_inversion_height(weather_data, idx):
     except:
         return 0, 0
 
-# --- CONTINUOUS RASTER (FLUSH POLYGON) INTERPOLATION ENGINE ---
+# --- CONTINUOUS RASTER (GAUSSIAN RBF) INTERPOLATION ENGINE ---
 BURN_CMAP = [[255, 237, 160], [254, 178, 76], [253, 141, 60], [240, 59, 32], [189, 0, 38]]
 SKUNK_CMAP = [[242, 240, 247], [203, 201, 226], [158, 154, 200], [117, 107, 177], [84, 39, 143]]
 SMOKE_CMAP = [[246, 232, 195], [223, 194, 125], [191, 129, 45], [140, 81, 10], [84, 48, 5]]
 FOG_CMAP = [[237, 248, 251], [178, 226, 226], [102, 194, 164], [44, 162, 95], [0, 109, 44]]
 
-def interpolate_dense_grid(orig_data, value_key, cmap, max_v):
+def interpolate_dense_grid(orig_data, value_key, cmap, max_v, step):
     """
-    Interpolates the 10x10 API grid into a flush 50x50 Polygon layer.
-    Fixes the 'polka-dot' visual bug and prevents opacity stacking 
-    so the map stays readable.
+    Interpolates the 10x10 API grid using a Gaussian Radial Basis Function (RBF)
+    to create ultra-smooth meteorological gradients without bullseye artifacts.
     """
     points = [d for d in orig_data if value_key in d]
     if not points: return None
@@ -163,51 +162,48 @@ def interpolate_dense_grid(orig_data, value_key, cmap, max_v):
     
     if np.max(o_vals) <= 0: return None
         
-    grid_size = 50
+    grid_size = 75 # Bumped for higher fidelity smoothing
     
-    # Calculate step of the original 10x10 grid to extend the bounding box perfectly
-    orig_step_lat = (np.max(o_lats) - np.min(o_lats)) / 9.0
-    orig_step_lon = (np.max(o_lons) - np.min(o_lons)) / 9.0
-    
-    min_lat, max_lat = np.min(o_lats) - (orig_step_lat/2), np.max(o_lats) + (orig_step_lat/2)
-    min_lon, max_lon = np.min(o_lons) - (orig_step_lon/2), np.max(o_lons) + (orig_step_lon/2)
+    min_lat, max_lat = np.min(o_lats) - (step/2), np.max(o_lats) + (step/2)
+    min_lon, max_lon = np.min(o_lons) - (step/2), np.max(o_lons) + (step/2)
     
     lon_array = np.linspace(min_lon, max_lon, grid_size)
     lat_array = np.linspace(min_lat, max_lat, grid_size)
     glons, glats = np.meshgrid(lon_array, lat_array)
     dense_lons, dense_lats = glons.flatten(), glats.flatten()
     
-    # Calculate half-widths for the flush polygons
-    hw = (max_lon - min_lon) / (grid_size - 1) / 2.0
-    hh = (max_lat - min_lat) / (grid_size - 1) / 2.0
+    # 2% overlap to permanently hide WebGL hairline seams
+    hw = ((max_lon - min_lon) / (grid_size - 1) / 2.0) * 1.02
+    hh = ((max_lat - min_lat) / (grid_size - 1) / 2.0) * 1.02
     
-    # Mathematical spatial blending (Inverse Distance Weighting)
     d_lon = dense_lons[:, np.newaxis] - o_lons[np.newaxis, :]
     d_lat = dense_lats[:, np.newaxis] - o_lats[np.newaxis, :]
     dist = np.sqrt(d_lon**2 + d_lat**2)
-    dist[dist == 0] = 1e-10
     
-    weights = 1.0 / (dist ** 2)
-    dense_vals = np.sum(weights * o_vals[np.newaxis, :], axis=1) / np.sum(weights, axis=1)
+    # --- RADAR SMOOTHING ALGORITHM (Gaussian RBF) ---
+    sigma = step * 1.2 # Spread multiplier to perfectly bridge the coordinate gaps
+    weights = np.exp(-(dist**2) / (2 * sigma**2))
+    
+    weight_sums = np.sum(weights, axis=1)
+    weight_sums[weight_sums == 0] = 1e-10
+    dense_vals = np.sum(weights * o_vals[np.newaxis, :], axis=1) / weight_sums
     
     out_data = []
     for i in range(len(dense_vals)):
         v = dense_vals[i]
         if v < 1: continue 
         
-        # Smooth RGB Linear Interpolation
         pct = max(0.0, min(1.0, v / max_v))
         idx = pct * (len(cmap) - 1)
         lower = int(math.floor(idx))
         upper = int(math.ceil(idx))
-        weight = idx - lower
+        color_weight = idx - lower
         
-        r = int(cmap[lower][0] * (1 - weight) + cmap[upper][0] * weight)
-        g = int(cmap[lower][1] * (1 - weight) + cmap[upper][1] * weight)
-        b = int(cmap[lower][2] * (1 - weight) + cmap[upper][2] * weight)
+        r = int(cmap[lower][0] * (1 - color_weight) + cmap[upper][0] * color_weight)
+        g = int(cmap[lower][1] * (1 - color_weight) + cmap[upper][1] * color_weight)
+        b = int(cmap[lower][2] * (1 - color_weight) + cmap[upper][2] * color_weight)
         
-        # Capped Alpha: Maxes out at 130 (~50% opacity) so map names stay visible!
-        alpha = int(max(0, min(130, pct * 220)))
+        alpha = int(max(0, min(150, pct * 255))) # Max 150/255 keeps the base map highly readable
         
         lon, lat = float(dense_lons[i]), float(dense_lats[i])
         polygon = [
@@ -224,7 +220,8 @@ def interpolate_dense_grid(orig_data, value_key, cmap, max_v):
         get_polygon='polygon',
         get_fill_color='color',
         filled=True,
-        stroked=False, 
+        stroked=False,
+        wireframe=False, # Essential for smooth rendering
         pickable=False
     )
 
@@ -541,19 +538,19 @@ if search_query:
 
                         if not df_map.empty:
                             if show_burn:
-                                l_b = interpolate_dense_grid(map_data, 'potential', BURN_CMAP, 100.0)
+                                l_b = interpolate_dense_grid(map_data, 'potential', BURN_CMAP, 100.0, step)
                                 if l_b: layers.append(l_b)
                                 
                             if show_skunk:
-                                l_sk = interpolate_dense_grid(map_data, 'skunk', SKUNK_CMAP, 100.0)
+                                l_sk = interpolate_dense_grid(map_data, 'skunk', SKUNK_CMAP, 100.0, step)
                                 if l_sk: layers.append(l_sk)
                                 
                             if show_smoke:
-                                l_sm = interpolate_dense_grid(map_data, 'pm25', SMOKE_CMAP, 150.0)
+                                l_sm = interpolate_dense_grid(map_data, 'pm25', SMOKE_CMAP, 150.0, step)
                                 if l_sm: layers.append(l_sm)
                                 
                             if show_fog:
-                                l_fg = interpolate_dense_grid(map_data, 'fog_weight', FOG_CMAP, 100.0)
+                                l_fg = interpolate_dense_grid(map_data, 'fog_weight', FOG_CMAP, 100.0, step)
                                 if l_fg: layers.append(l_fg)
 
                             pad_lat = step / 2
