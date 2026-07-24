@@ -115,6 +115,10 @@ def aqi_to_pm25(aqi):
 
 # --- EXACT GRANULAR FOG / MARINE LAYER ENGINE ---
 def estimate_inversion_height(weather_data, idx):
+    """
+    Interpolates the exact thermal center of mass of the inversion 
+    to pinpoint the true fog ceiling down to the meter.
+    """
     try:
         levels = [(100, "temperature_1000hPa"), (300, "temperature_975hPa"), (500, "temperature_950hPa"), 
                   (800, "temperature_925hPa"), (1000, "temperature_900hPa"), (1500, "temperature_850hPa")]
@@ -372,11 +376,14 @@ if search_query:
                 interactive_map = st.radio("Do you want an interactive map?", ["Yes (Zoom & Pan)", "No (Static Map)"], horizontal=True)
                 is_interactive = (interactive_map == "Yes (Zoom & Pan)")
                 
+                # --- DYNAMIC HEAT RADIUS ADDED HERE ---
                 step_dict = {"Micro (~20km)": 0.02, "Local (~45km)": 0.04, "Regional (~90km)": 0.08, "Macro (~160km)": 0.15}
                 zoom_dict = {"Micro (~20km)": 9.5, "Local (~45km)": 8.5, "Regional (~90km)": 7.5, "Macro (~160km)": 6.5}
+                heat_radius_dict = {"Micro (~20km)": 150, "Local (~45km)": 100, "Regional (~90km)": 75, "Macro (~160km)": 55}
                 
                 step = step_dict[zoom_level]
                 map_zoom = zoom_dict[zoom_level]
+                heat_radius = heat_radius_dict[zoom_level]
                 r_mult = step / 0.08 
                 
                 if is_interactive:
@@ -449,6 +456,7 @@ if search_query:
                         df_map = pd.DataFrame(map_data)
                         layers = []
 
+                        # --- HEATMAP LAYERS NOW USE DYNAMIC heat_radius ---
                         if show_burn and not df_map[df_map['potential'] > 0].empty:
                             layers.append(pdk.Layer(
                                 'HeatmapLayer',
@@ -456,7 +464,7 @@ if search_query:
                                 get_position='[lon, lat]',
                                 get_weight='potential',
                                 opacity=0.6,
-                                radiusPixels=55,
+                                radiusPixels=heat_radius,
                                 colorRange=[[255, 237, 160], [254, 178, 76], [253, 141, 60], [240, 59, 32], [189, 0, 38]]
                             ))
                             
@@ -467,7 +475,7 @@ if search_query:
                                 get_position='[lon, lat]',
                                 get_weight='skunk',
                                 opacity=0.6,
-                                radiusPixels=55,
+                                radiusPixels=heat_radius,
                                 colorRange=[[242, 240, 247], [203, 201, 226], [158, 154, 200], [117, 107, 177], [84, 39, 143]] 
                             ))
 
@@ -478,7 +486,7 @@ if search_query:
                                 get_position='[lon, lat]',
                                 get_weight='pm25',
                                 opacity=0.6,
-                                radiusPixels=55,
+                                radiusPixels=heat_radius,
                                 colorRange=[[246, 232, 195], [223, 194, 125], [191, 129, 45], [140, 81, 10], [84, 48, 5]]
                             ))
 
@@ -489,11 +497,10 @@ if search_query:
                                 get_position='[lon, lat]',
                                 get_weight='fog_weight',
                                 opacity=0.6,
-                                radiusPixels=55,
+                                radiusPixels=heat_radius,
                                 colorRange=[[237, 248, 251], [178, 226, 226], [102, 194, 164], [44, 162, 95], [0, 109, 44]] 
                             ))
 
-                        # --- NEW VIGNETTE MASK LAYER ---
                         pad_lat = step / 2
                         pad_lon = step / 2
                         min_lon, max_lon = min(lons), max(lons)
@@ -501,13 +508,13 @@ if search_query:
 
                         mask_data = [{
                             "polygon": [
-                                [[-180, 90], [180, 90], [180, -90], [-180, -90]], # World background
+                                [[-180, 90], [180, 90], [180, -90], [-180, -90]], 
                                 [
                                     [min_lon - pad_lon, min_lat - pad_lat],
                                     [max_lon + pad_lon, min_lat - pad_lat],
                                     [max_lon + pad_lon, max_lat + pad_lat],
                                     [min_lon - pad_lon, max_lat + pad_lat]
-                                ] # Target grid hole
+                                ] 
                             ]
                         }]
 
@@ -515,10 +522,10 @@ if search_query:
                             'PolygonLayer',
                             data=mask_data,
                             get_polygon='polygon',
-                            get_fill_color=[22, 25, 28, 230], # Dark transparent mask
+                            get_fill_color=[22, 25, 28, 230], 
                             filled=True,
                             stroked=True,
-                            get_line_color=[150, 150, 150, 150], # Crisp white/gray frame border
+                            get_line_color=[150, 150, 150, 150], 
                             line_width_min_pixels=2,
                             pickable=False
                         ))
