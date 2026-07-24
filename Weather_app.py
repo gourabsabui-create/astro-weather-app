@@ -109,7 +109,6 @@ def safe_val(data, key, i):
         return 0
 
 def aqi_to_pm25(aqi):
-    # Converts US AQI standard back to raw µg/m³ for direct math comparison
     if aqi <= 50: return aqi * (12.0 / 50.0)
     elif aqi <= 100: return 12.0 + (aqi - 50) * (23.4 / 50.0)
     elif aqi <= 150: return 35.4 + (aqi - 100) * (20.0 / 50.0)
@@ -128,7 +127,6 @@ def get_celestial_az_alt(lat, lon, local_time, tz_string, target="galactic_core"
     if target == "galactic_core":
         ra = math.radians(266.405) 
         dec = math.radians(-28.936) 
-        
     elif target == "sun":
         g = math.radians((357.529 + 0.98560028 * D) % 360)
         q = (280.459 + 0.98564736 * D) % 360
@@ -136,7 +134,6 @@ def get_celestial_az_alt(lat, lon, local_time, tz_string, target="galactic_core"
         e = math.radians(23.439)
         dec = math.asin(math.sin(e) * math.sin(L))
         ra = math.atan2(math.cos(e) * math.sin(L), math.cos(L))
-        
     elif target == "moon":
         L_m = (218.316 + 13.176396 * D) % 360
         M_m = math.radians((134.963 + 13.064993 * D) % 360)
@@ -160,9 +157,7 @@ def get_celestial_az_alt(lat, lon, local_time, tz_string, target="galactic_core"
     cos_az = max(-1.0, min(1.0, cos_az)) 
     az = math.acos(cos_az)
     
-    if math.sin(ha_rad) > 0:
-        az = 2 * math.pi - az
-        
+    if math.sin(ha_rad) > 0: az = 2 * math.pi - az
     return math.degrees(az), math.degrees(alt)
 
 def create_vector_line(lat, lon, azimuth, length_deg, color):
@@ -172,7 +167,6 @@ def create_vector_line(lat, lon, azimuth, length_deg, color):
 
 # --- APP START ---
 mode = st.radio("Select Dashboard Mode:", ["🌅 Sunrise & Sunset", "🌌 Astrophotography"], horizontal=True)
-
 search_query = st.text_input("Enter a location (e.g., Jasper, Banff, Yosemite):", "Lake Louise")
 
 if search_query:
@@ -185,7 +179,6 @@ if search_query:
         location_options = {}
         for loc in geo_response["results"]:
             display_name = loc.get("name", "Unknown Location")
-            # Handle duplicate location names by appending coordinates
             if display_name in location_options:
                 display_name += f" ({loc['latitude']}, {loc['longitude']})"
             location_options[display_name] = {"lat": loc["latitude"], "lon": loc["longitude"], "tz": loc.get("timezone", "auto")}
@@ -256,7 +249,6 @@ if search_query:
                 models_to_run = {"High-Res (Local)": "best_match", "ECMWF (European)": "ecmwf_ifs", "GFS (American)": "gfs_seamless"}
                 ensemble_results = []
                 
-                # Model AQ vs Live Ground Truth
                 aq_idx = aq_data["hourly"]["time"].index(closest_hour_str) if aq_data and "hourly" in aq_data and closest_hour_str in aq_data["hourly"].get("time", []) else 0
                 model_pm25 = safe_val(aq_data, "pm2_5", aq_idx) if aq_data else 0
                 
@@ -286,7 +278,7 @@ if search_query:
                         vis_block = max(0, min(1.0, (opaque_deck - 45) / 45)) 
                         potential = round(max(0, min(100, ((l_mid * 0.48) + (effective_high * 1.15 * (1.0 - vis_block))) - (u_low * 0.25) - (15 if (l_low > 15 and l_mid > 15 and effective_high > 15) else 0))))
                         
-                        skunk_from_smoke = max(0, (active_pm25 - 40) * 1.5) # Using overridden smoke data
+                        skunk_from_smoke = max(0, (active_pm25 - 40) * 1.5)
                         skunk = round(min(100, max(max(0, (l_low - 50) * 2.0), max(0, (u_low - 40) * 1.8), max(0, (opaque_deck - 70) * 3.0) if opaque_deck > 70 else 0, skunk_from_smoke)))
                         
                         ensemble_results.append({"name": model_label, "potential": potential, "skunk": skunk, "total": l_total, "low": l_low, "mid": l_mid, "high": l_high, "rh": rh_300})
@@ -325,7 +317,20 @@ if search_query:
                     st.error("🛑 **Heavy Smoke Skunk:** Wildfire smoke is very thick. The sun will likely vanish into a gray/brown haze long before it hits the horizon.")
 
                 st.divider()
+                
+                # --- NEW DYNAMIC GRID UI ---
                 st.subheader("🗺️ High-Resolution Regional Overlay")
+                
+                zoom_level = st.select_slider(
+                    "Grid Coverage Area:",
+                    options=["Micro (~20km)", "Local (~45km)", "Regional (~90km)", "Macro (~160km)"],
+                    value="Regional (~90km)"
+                )
+                
+                step_dict = {"Micro (~20km)": 0.02, "Local (~45km)": 0.04, "Regional (~90km)": 0.08, "Macro (~160km)": 0.15}
+                step = step_dict[zoom_level]
+                r_mult = step / 0.08 # Multiplier to dynamically resize circles based on grid spread
+                
                 c_b, c_sk, c_sm, c_f = st.columns(4)
                 show_burn = c_b.checkbox("🔥 Burn", value=True)
                 show_skunk = c_sk.checkbox("🦨 Skunk", value=True)
@@ -334,7 +339,6 @@ if search_query:
 
                 with st.spinner("Rendering cached spatial overlay..."):
                     grid_size = 10
-                    step = 0.08 
                     lats = [lat + (i - grid_size//2)*step for i in range(grid_size)]
                     lons = [lon + (i - grid_size//2)*step for i in range(grid_size)]
                     coords = list(itertools.product(lats, lons))
@@ -355,7 +359,6 @@ if search_query:
                                 aq_idx = loc_aq["hourly"]["time"].index(closest_hour_str) if loc_aq and "hourly" in loc_aq and closest_hour_str in loc_aq["hourly"].get("time", []) else 0
                                 
                                 grid_pm25 = safe_val(loc_aq, "pm2_5", aq_idx) if loc_aq else 0
-                                # If the center coordinate was overridden, blanket override the grid to prevent map glitches
                                 if is_override: grid_pm25 = max(grid_pm25, active_pm25)
 
                                 l_low, l_mid, l_high = safe_val(loc_w, "cloud_cover_low", idx), safe_val(loc_w, "cloud_cover_mid", idx), safe_val(loc_w, "cloud_cover_high", idx)
@@ -365,7 +368,6 @@ if search_query:
                                 potential = round(max(0, min(100, ((l_mid * 0.48) + (max(l_high, max(0, safe_val(loc_w, "relative_humidity_300hPa", idx) - 50)) * 1.15 * (1.0 - max(0, min(1.0, (opaque_deck - 45) / 45))))))))
                                 skunk = round(min(100, max(max(0, (l_low - 50) * 2.0), max(0, (opaque_deck - 70) * 3.0) if opaque_deck > 70 else 0)))
 
-                                # ADDED EXTRA DATA FOR TOOLTIPS
                                 map_data.append({
                                     "lat": c[0], "lon": c[1],
                                     "burn_color": [255, max(0, int(255 - (potential * 2.55))), 0, 140] if show_burn else [0,0,0,0],
@@ -381,7 +383,6 @@ if search_query:
                                 })
                             except: continue
 
-                        # ADDED HTML TOOLTIP TEMPLATE
                         tooltip_html = (
                             "<b>Coordinates:</b> {lat}, {lon}<br/>"
                             "<b>🔥 Burn Potential:</b> {potential}/100<br/>"
@@ -390,15 +391,14 @@ if search_query:
                             "<b>☁️ Clouds (Low/Mid/High):</b> {cloud_low}% / {cloud_mid}% / {cloud_high}%"
                         )
 
-                        # ADDED PICKABLE=TRUE AND TOOLTIP
                         st.pydeck_chart(pdk.Deck(
                             map_style='dark',
-                            initial_view_state=pdk.ViewState(latitude=lat, longitude=lon, zoom=7.5, pitch=0),
+                            initial_view_state=pdk.ViewState(latitude=lat, longitude=lon, zoom=7.5 if zoom_level == "Regional (~90km)" else (9.5 if zoom_level == "Micro (~20km)" else 8.5), pitch=0),
                             layers=[
-                                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(map_data), get_position='[lon, lat]', get_color='burn_color', get_radius=5000, pickable=True),
-                                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(map_data), get_position='[lon, lat]', get_color='skunk_color', get_radius=3000, pickable=True),
-                                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(map_data), get_position='[lon, lat]', get_color='smoke_color', get_radius=1500, pickable=True), 
-                                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(map_data), get_position='[lon, lat]', get_color='fog_color', get_radius=700, pickable=True)
+                                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(map_data), get_position='[lon, lat]', get_color='burn_color', get_radius=5000 * r_mult, pickable=True),
+                                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(map_data), get_position='[lon, lat]', get_color='skunk_color', get_radius=3000 * r_mult, pickable=True),
+                                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(map_data), get_position='[lon, lat]', get_color='smoke_color', get_radius=1500 * r_mult, pickable=True), 
+                                pdk.Layer('ScatterplotLayer', data=pd.DataFrame(map_data), get_position='[lon, lat]', get_color='fog_color', get_radius=700 * r_mult, pickable=True)
                             ],
                             tooltip={"html": tooltip_html, "style": {"backgroundColor": "#222222", "color": "white"}}
                         ))
@@ -426,7 +426,6 @@ if search_query:
                 t_100m = safe_val(base_data, "temperature_1000hPa", baseline_idx)
                 t_1500m = safe_val(base_data, "temperature_850hPa", baseline_idx)
                 
-                # Model AQ vs Live Ground Truth
                 aq_idx = aq_data["hourly"]["time"].index(closest_hour_str) if aq_data and "hourly" in aq_data and closest_hour_str in aq_data["hourly"].get("time", []) else 0
                 model_pm25 = safe_val(aq_data, "pm2_5", aq_idx) if aq_data else 0
                 
