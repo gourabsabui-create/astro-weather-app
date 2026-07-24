@@ -80,7 +80,7 @@ def fetch_model_grid(lat_str, lon_str, model_code):
     try:
         p_grid = {
             "latitude": lat_str, "longitude": lon_str, 
-            "hourly": "cloud_cover_low,cloud_cover_mid,cloud_cover_high,relative_humidity_300hPa,temperature_1000hPa,temperature_900hPa",
+            "hourly": "cloud_cover_low,cloud_cover_mid,cloud_cover_high,relative_humidity_300hPa,temperature_1000hPa,temperature_975hPa,temperature_950hPa,temperature_925hPa,temperature_900hPa,temperature_850hPa",
             "timezone": "auto", "forecast_days": 14, "models": model_code
         }
         return requests.get("https://api.open-meteo.com/v1/forecast", params=p_grid, timeout=10).json()
@@ -112,6 +112,36 @@ def aqi_to_pm25(aqi):
     elif aqi <= 150: return 35.4 + (aqi - 100) * (20.0 / 50.0)
     elif aqi <= 200: return 55.4 + (aqi - 150) * (95.0 / 50.0)
     else: return 150.4 + (aqi - 200) * (100.0 / 100.0)
+
+# --- GRANULAR FOG / MARINE LAYER ENGINE ---
+def estimate_inversion_height(weather_data, idx):
+    """
+    Slices the atmosphere across 6 pressure levels to find the exact top 
+    of the temperature inversion (where the fog/marine layer stops).
+    """
+    try:
+        levels = {
+            100: "temperature_1000hPa",
+            300: "temperature_975hPa",
+            500: "temperature_950hPa",
+            800: "temperature_925hPa",
+            1000: "temperature_900hPa",
+            1500: "temperature_850hPa"
+        }
+        surface_temp = safe_val(weather_data, "temperature_1000hPa", idx)
+        max_temp = surface_temp
+        max_alt = 100
+        
+        for alt, key in levels.items():
+            t = safe_val(weather_data, key, idx)
+            if t > max_temp:
+                max_temp = t
+                max_alt = alt
+                
+        delta_t = round(max_temp - surface_temp, 1)
+        return delta_t, max_alt
+    except:
+        return 0, 100
 
 # --- UNIFIED CELESTIAL MATH ENGINE (100% OFFLINE) ---
 def get_celestial_az_alt(lat, lon, local_time, tz_string, target="galactic_core"):
@@ -234,7 +264,8 @@ if search_query:
                 if elev_diff > 150: 
                     angle_rads = math.atan(elev_diff / 5000)
                     minutes_lost = round(math.degrees(angle_rads) * 4)
-                    st.warning(f"⚠️ **Mountain Shadow Detected:** The {direction} ridge is {round(elev_diff)}m higher than your location. The sun will disappear behind the peaks **~{minutes_lost} minutes before** official {event_type}.")
+                    elev_diff_ft = round(elev_diff * 3.28084)
+                    st.warning(f"⚠️ **Mountain Shadow Detected:** The {direction} ridge is {round(elev_diff)}m ({elev_diff_ft:,} ft) higher than your location. The sun will disappear behind the peaks **~{minutes_lost} minutes before** official {event_type}.")
                 else:
                     st.success(f"✅ **Clear Horizon:** No significant topographical blocking detected to the {direction}.")
 
@@ -287,9 +318,17 @@ if search_query:
                 if ensemble_results:
                     avg_pot = round(sum(m["potential"] for m in ensemble_results) / len(ensemble_results))
                     avg_skunk = round(sum(m["skunk"] for m in ensemble_results) / len(ensemble_results))
-                    c1, c2 = st.columns(2)
-                    c1.metric("🔥 CONSENSUS BURN POTENTIAL", f"{avg_pot}/100")
-                    c2.metric("🦨 CONSENSUS CHANCE OF SKUNK", f"{avg_skunk}%")
+                    
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("🔥 BURN POTENTIAL", f"{avg_pot}/100")
+                    c2.metric("🦨 SKUNK CHANCE", f"{avg_skunk}%")
+                    
+                    inv_dt, inv_alt = estimate_inversion_height(base_data, baseline_idx)
+                    if inv_dt > 0:
+                        inv_alt_ft = round(inv_alt * 3.28084)
+                        c3.metric("🌫️ FOG / MARINE LAYER", f"Below ~{inv_alt}m ({inv_alt_ft:,} ft)", f"+{inv_dt}°C ΔT", delta_color="inverse")
+                    else:
+                        c3.metric("🌫️ FOG RISK", "Low", "No Inversion", delta_color="normal")
                     
                     with st.expander("📊 View Ensemble Breakdown (Model Agreement)"):
                         for m in ensemble_results:
@@ -316,7 +355,6 @@ if search_query:
 
                 st.divider()
                 
-                # --- DYNAMIC HEAT MAP UI ---
                 st.subheader("🗺️ High-Resolution Regional Overlay")
                 
                 zoom_level = st.select_slider(
@@ -359,19 +397,21 @@ if search_query:
                                 grid_pm25 = safe_val(loc_aq, "pm2_5", aq_idx) if loc_aq else 0
                                 if is_override: grid_pm25 = max(grid_pm25, active_pm25)
 
-                                l_low, l_mid, l_high = safe_val(loc_w, "cloud_cover_low", idx), safe_val(loc_w, "cloud_cover_mid", idx), safe_val(loc_w, "cloud_cover_high", idx)
-                                t_100m, t_1000m = safe_val(loc_w, "temperature_1000hPa", idx), safe_val(loc_w, "temperature_900hPa", idx)
+                                l_low = safe_val(loc_w, "cloud_cover_low", idx)
+                                l_mid = safe_val(loc_w, "cloud_cover_mid", idx)
+                                l_high = safe_val(loc_w, "cloud_cover_high", idx)
                                 
                                 opaque_deck = l_low + l_mid
                                 potential = round(max(0, min(100, ((l_mid * 0.48) + (max(l_high, max(0, safe_val(loc_w, "relative_humidity_300hPa", idx) - 50)) * 1.15 * (1.0 - max(0, min(1.0, (opaque_deck - 45) / 45))))))))
                                 skunk = round(min(100, max(max(0, (l_low - 50) * 2.0), max(0, (opaque_deck - 70) * 3.0) if opaque_deck > 70 else 0)))
                                 
-                                # FOG & INVERSION CALCULATIONS
-                                inversion_deg = round(t_1000m - t_100m, 1)
-                                if inversion_deg > 0:
-                                    fog_details = f"High Risk (+{inversion_deg}°C Inversion, Trapped < 1000m)"
+                                # GRANULAR MAP FOG CALCULATIONS
+                                inv_dt_grid, inv_alt_grid = estimate_inversion_height(loc_w, idx)
+                                if inv_dt_grid > 0:
+                                    inv_alt_ft_grid = round(inv_alt_grid * 3.28084)
+                                    fog_details = f"Trapped < {inv_alt_grid}m ({inv_alt_ft_grid:,} ft) [+{inv_dt_grid}°C ΔT]"
                                 else:
-                                    fog_details = "Low Risk (Unstable Air, No Inversion)"
+                                    fog_details = "Clear (No Inversion)"
 
                                 map_data.append({
                                     "lat": c[0], "lon": c[1],
@@ -381,7 +421,7 @@ if search_query:
                                     "cloud_low": l_low,
                                     "cloud_mid": l_mid,
                                     "cloud_high": l_high,
-                                    "fog_weight": 100 if inversion_deg > 0 else 0,
+                                    "fog_weight": 100 if inv_dt_grid > 0 else 0,
                                     "fog_text": fog_details
                                 })
                             except: continue
@@ -433,7 +473,6 @@ if search_query:
                                 colorRange=[[237, 248, 251], [178, 226, 226], [102, 194, 164], [44, 162, 95], [0, 109, 44]] 
                             ))
 
-                        # INVISIBLE INTERACTIVE SCATTERPLOT LAYER
                         layers.append(pdk.Layer(
                             'ScatterplotLayer',
                             data=df_map,
@@ -443,7 +482,6 @@ if search_query:
                             pickable=True
                         ))
 
-                        # TOOLTIP WITH FOG DETAILS
                         tooltip_html = (
                             "<b>Coordinates:</b> {lat}, {lon}<br/>"
                             "<b>🔥 Burn Potential:</b> {potential}/100<br/>"
@@ -484,8 +522,6 @@ if search_query:
                 baseline_idx = hourly_times.index(closest_hour_str)
                 total_clouds = safe_val(base_data, "cloud_cover", baseline_idx)
                 high_clouds = safe_val(base_data, "cloud_cover_high", baseline_idx)
-                t_100m = safe_val(base_data, "temperature_1000hPa", baseline_idx)
-                t_1500m = safe_val(base_data, "temperature_850hPa", baseline_idx)
                 
                 aq_idx = aq_data["hourly"]["time"].index(closest_hour_str) if aq_data and "hourly" in aq_data and closest_hour_str in aq_data["hourly"].get("time", []) else 0
                 model_pm25 = safe_val(aq_data, "pm2_5", aq_idx) if aq_data else 0
@@ -494,7 +530,14 @@ if search_query:
                 is_override = live_pm25 > (model_pm25 + 10)
                 active_pm25 = live_pm25 if is_override else model_pm25
                 
-                seeing_quality = "Excellent 🟢 (Stable Inversion)" if t_1500m > t_100m else "Good 🟡 (Moderate Stability)" if (t_100m - t_1500m) < 5 else "Poor 🔴 (Turbulent)"
+                inv_dt_astro, inv_alt_astro = estimate_inversion_height(base_data, baseline_idx)
+                
+                if inv_dt_astro > 0:
+                    seeing_quality = "Excellent 🟢 (Stable Air)"
+                elif inv_dt_astro > -3:
+                    seeing_quality = "Good 🟡 (Moderate Stability)"
+                else:
+                    seeing_quality = "Poor 🔴 (Turbulent)"
                     
                 col1, col2, col3, col4 = st.columns(4)
                 col1.metric("Cloud Cover", f"{total_clouds}%", delta="Clear" if total_clouds < 15 else "Obscured", delta_color="inverse")
