@@ -373,7 +373,6 @@ if search_query:
                     value="Regional (~90km)"
                 )
                 
-                # --- NEW INTERACTIVE TOGGLE ---
                 interactive_map = st.radio("Do you want an interactive map?", ["Yes (Zoom & Pan)", "No (Static Map)"], horizontal=True)
                 is_interactive = (interactive_map == "Yes (Zoom & Pan)")
                 
@@ -384,6 +383,19 @@ if search_query:
                 map_zoom = zoom_dict[zoom_level]
                 r_mult = step / 0.08 
                 
+                # --- CAMERA LOCK LOGIC ---
+                if is_interactive:
+                    v_state = pdk.ViewState(latitude=lat, longitude=lon, zoom=map_zoom, pitch=0)
+                else:
+                    v_state = pdk.ViewState(
+                        latitude=lat, 
+                        longitude=lon, 
+                        zoom=map_zoom, 
+                        pitch=0,
+                        min_zoom=map_zoom, 
+                        max_zoom=map_zoom
+                    )
+
                 c_b, c_sk, c_sm, c_f = st.columns(4)
                 show_burn = c_b.checkbox("🔥 Burn", value=True)
                 show_skunk = c_sk.checkbox("🦨 Skunk", value=True)
@@ -509,13 +521,8 @@ if search_query:
 
                         st.pydeck_chart(pdk.Deck(
                             map_style='dark',
-                            # Explicitly handle PyDeck mapping controllers based on the radio button
                             views=[pdk.View(type="MapView", controller=is_interactive)],
-                            initial_view_state=pdk.ViewState(
-                                latitude=lat, longitude=lon, 
-                                zoom=map_zoom, 
-                                pitch=0
-                            ),
+                            initial_view_state=v_state,
                             layers=layers,
                             tooltip={"html": tooltip_html, "style": {"backgroundColor": "#222222", "color": "white"}}
                         ))
@@ -570,7 +577,6 @@ if search_query:
             # --- OFFLINE GC TRACKING UI (PHOTOPILLS 3D STYLE) ---
             st.write("### 🔭 Advanced Celestial Tracking Map")
             
-            # ADDED STATIC TOGGLE TO ASTRO MAP AS WELL
             interactive_astro = st.radio("Do you want an interactive map?", ["Yes (Zoom & Pan)", "No (Static Map)"], horizontal=True, key="astro_toggle")
             is_astro_interactive = (interactive_astro == "Yes (Zoom & Pan)")
             
@@ -612,10 +618,19 @@ if search_query:
             if sun_alt > -18: line_data.append(create_vector_line(lat, lon, sun_az, 0.45, [255, 140, 0, 200] if sun_alt > 0 else [255, 140, 0, 80]))
             if moon_alt > -10: line_data.append(create_vector_line(lat, lon, moon_az, 0.45, [200, 220, 255, 200] if moon_alt > 0 else [200, 220, 255, 60]))
 
+            # --- ASTRO CAMERA LOCK LOGIC ---
+            if is_astro_interactive:
+                astro_view = pdk.ViewState(latitude=lat, longitude=lon, zoom=8.5, pitch=45, bearing=0)
+            else:
+                astro_view = pdk.ViewState(
+                    latitude=lat, longitude=lon, zoom=8.5, pitch=45, bearing=0,
+                    min_zoom=8.5, max_zoom=8.5
+                )
+
             st.pydeck_chart(pdk.Deck(
                 map_style=bg_style,
                 views=[pdk.View(type="MapView", controller=is_astro_interactive)],
-                initial_view_state=pdk.ViewState(latitude=lat, longitude=lon, zoom=8.5, pitch=45, bearing=0),
+                initial_view_state=astro_view,
                 layers=[
                     pdk.Layer('LineLayer', data=pd.DataFrame(line_data) if line_data else pd.DataFrame(columns=["start_lon", "start_lat", "end_lon", "end_lat", "color"]), get_source_position='[start_lon, start_lat]', get_target_position='[end_lon, end_lat]', get_color='color', get_width=300),
                     pdk.Layer('ScatterplotLayer', data=pd.DataFrame(dot_data), get_position='[lon, lat]', get_color='color', get_radius='radius', pickable=False)
