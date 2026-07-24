@@ -107,7 +107,6 @@ def fetch_tides(lat, lon, token):
     if token == "demo":
         return "demo"
     try:
-        # Fetch 3 full days of data centered roughly around the current request time
         start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
         end = start + timedelta(days=4)
         payload = {
@@ -322,6 +321,9 @@ if search_query:
             live_aqi, live_station = fetch_waqi_live(lat, lon)
             
             tide_data = fetch_tides(lat, lon, STORMGLASS_TOKEN) if fetch_tides_toggle else None
+            
+            # --- TIMEZONE FIX EXCLUSIVELY HAPPENS HERE ---
+            real_tz = base_data.get("timezone", "UTC") if base_data else "UTC"
 
         st.divider()
 
@@ -448,31 +450,29 @@ if search_query:
                     st.info("💡 **Tide Tracker Inactive:** To track high/low tide times for coastal reflections and sea stacks, replace `STORMGLASS_TOKEN` at the top of the script with a free API key from stormglass.io.")
                 elif isinstance(tide_data, list) and len(tide_data) > 0:
                     
-                    # Convert the string target time into a robust localized Pandas Timestamp
                     target_dt = pd.Timestamp(dt)
                     if target_dt.tzinfo is None:
-                        target_dt = target_dt.tz_localize(tz)
+                        target_dt = target_dt.tz_localize(real_tz)
                     else:
-                        target_dt = target_dt.tz_convert(tz)
+                        target_dt = target_dt.tz_convert(real_tz)
                         
                     parsed_tides = []
                     for t in tide_data:
                         try:
-                            t_time = pd.to_datetime(t['time']).tz_convert(tz)
+                            t_time = pd.to_datetime(t['time']).tz_convert(real_tz)
                             parsed_tides.append((t_time, t['type'], t['height']))
                         except:
                             continue
                             
                     parsed_tides.sort(key=lambda x: x[0])
                     
-                    # Find chronologically surrounding tides instead of strict calendar matching
                     past_tides = [t for t in parsed_tides if t[0] < target_dt]
                     future_tides = [t for t in parsed_tides if t[0] >= target_dt]
                     
                     display_tides = []
                     if past_tides:
-                        display_tides.append(past_tides[-1]) # The immediate prior tide
-                    display_tides.extend(future_tides[:3]) # The next three tides
+                        display_tides.append(past_tides[-1]) 
+                    display_tides.extend(future_tides[:3]) 
                     
                     if display_tides:
                         t_cols = st.columns(len(display_tides))
@@ -480,7 +480,6 @@ if search_query:
                             icon = "🔼 High" if t_type == "high" else "🔽 Low"
                             t_height_ft = round(t_height * 3.28084, 1)
                             
-                            # Calculate exactly how many hours apart the tide is from the shoot
                             delta_hrs = (t_time - target_dt).total_seconds() / 3600
                             if delta_hrs < 0:
                                 rel_str = f"{-delta_hrs:.1f}h before"
@@ -757,14 +756,14 @@ if search_query:
                 
                 target_dt = pd.Timestamp(dt)
                 if target_dt.tzinfo is None:
-                    target_dt = target_dt.tz_localize(tz)
+                    target_dt = target_dt.tz_localize(real_tz)
                 else:
-                    target_dt = target_dt.tz_convert(tz)
+                    target_dt = target_dt.tz_convert(real_tz)
                     
                 parsed_tides = []
                 for t in tide_data:
                     try:
-                        t_time = pd.to_datetime(t['time']).tz_convert(tz)
+                        t_time = pd.to_datetime(t['time']).tz_convert(real_tz)
                         parsed_tides.append((t_time, t['type'], t['height']))
                     except:
                         continue
@@ -812,9 +811,9 @@ if search_query:
             minute_offset = st.slider("Scrub Time (Granular Adjustment):", -360, 360, 0, 5, "%d mins")
             tracking_time = dt + timedelta(minutes=minute_offset)
             
-            gc_az, gc_alt = get_celestial_az_alt(lat, lon, tracking_time, tz, "galactic_core")
-            sun_az, sun_alt = get_celestial_az_alt(lat, lon, tracking_time, tz, "sun")
-            moon_az, moon_alt = get_celestial_az_alt(lat, lon, tracking_time, tz, "moon")
+            gc_az, gc_alt = get_celestial_az_alt(lat, lon, tracking_time, real_tz, "galactic_core")
+            sun_az, sun_alt = get_celestial_az_alt(lat, lon, tracking_time, real_tz, "sun")
+            moon_az, moon_alt = get_celestial_az_alt(lat, lon, tracking_time, real_tz, "moon")
             
             if sun_alt > 0: bg_style, sky_status = 'light', "☀️ Daytime (Light Map)"
             elif sun_alt > -6: bg_style, sky_status = 'dark', "🌇 Civil Twilight (Golden/Blue Hour)"
