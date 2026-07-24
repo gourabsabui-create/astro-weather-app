@@ -115,10 +115,6 @@ def aqi_to_pm25(aqi):
 
 # --- EXACT GRANULAR FOG / MARINE LAYER ENGINE ---
 def estimate_inversion_height(weather_data, idx):
-    """
-    Interpolates the exact thermal center of mass of the inversion 
-    to pinpoint the true fog ceiling down to the meter.
-    """
     try:
         levels = [(100, "temperature_1000hPa"), (300, "temperature_975hPa"), (500, "temperature_950hPa"), 
                   (800, "temperature_925hPa"), (1000, "temperature_900hPa"), (1500, "temperature_850hPa")]
@@ -383,17 +379,12 @@ if search_query:
                 map_zoom = zoom_dict[zoom_level]
                 r_mult = step / 0.08 
                 
-                # --- CAMERA LOCK LOGIC ---
                 if is_interactive:
                     v_state = pdk.ViewState(latitude=lat, longitude=lon, zoom=map_zoom, pitch=0)
                 else:
                     v_state = pdk.ViewState(
-                        latitude=lat, 
-                        longitude=lon, 
-                        zoom=map_zoom, 
-                        pitch=0,
-                        min_zoom=map_zoom, 
-                        max_zoom=map_zoom
+                        latitude=lat, longitude=lon, zoom=map_zoom, pitch=0,
+                        min_zoom=map_zoom, max_zoom=map_zoom
                     )
 
                 c_b, c_sk, c_sm, c_f = st.columns(4)
@@ -502,6 +493,36 @@ if search_query:
                                 colorRange=[[237, 248, 251], [178, 226, 226], [102, 194, 164], [44, 162, 95], [0, 109, 44]] 
                             ))
 
+                        # --- NEW VIGNETTE MASK LAYER ---
+                        pad_lat = step / 2
+                        pad_lon = step / 2
+                        min_lon, max_lon = min(lons), max(lons)
+                        min_lat, max_lat = min(lats), max(lats)
+
+                        mask_data = [{
+                            "polygon": [
+                                [[-180, 90], [180, 90], [180, -90], [-180, -90]], # World background
+                                [
+                                    [min_lon - pad_lon, min_lat - pad_lat],
+                                    [max_lon + pad_lon, min_lat - pad_lat],
+                                    [max_lon + pad_lon, max_lat + pad_lat],
+                                    [min_lon - pad_lon, max_lat + pad_lat]
+                                ] # Target grid hole
+                            ]
+                        }]
+
+                        layers.append(pdk.Layer(
+                            'PolygonLayer',
+                            data=mask_data,
+                            get_polygon='polygon',
+                            get_fill_color=[22, 25, 28, 230], # Dark transparent mask
+                            filled=True,
+                            stroked=True,
+                            get_line_color=[150, 150, 150, 150], # Crisp white/gray frame border
+                            line_width_min_pixels=2,
+                            pickable=False
+                        ))
+
                         layers.append(pdk.Layer(
                             'ScatterplotLayer',
                             data=df_map,
@@ -574,7 +595,6 @@ if search_query:
 
             st.divider()
             
-            # --- OFFLINE GC TRACKING UI (PHOTOPILLS 3D STYLE) ---
             st.write("### 🔭 Advanced Celestial Tracking Map")
             
             interactive_astro = st.radio("Do you want an interactive map?", ["Yes (Zoom & Pan)", "No (Static Map)"], horizontal=True, key="astro_toggle")
@@ -618,7 +638,6 @@ if search_query:
             if sun_alt > -18: line_data.append(create_vector_line(lat, lon, sun_az, 0.45, [255, 140, 0, 200] if sun_alt > 0 else [255, 140, 0, 80]))
             if moon_alt > -10: line_data.append(create_vector_line(lat, lon, moon_az, 0.45, [200, 220, 255, 200] if moon_alt > 0 else [200, 220, 255, 60]))
 
-            # --- ASTRO CAMERA LOCK LOGIC ---
             if is_astro_interactive:
                 astro_view = pdk.ViewState(latitude=lat, longitude=lon, zoom=8.5, pitch=45, bearing=0)
             else:
