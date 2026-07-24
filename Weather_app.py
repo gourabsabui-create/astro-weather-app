@@ -38,57 +38,24 @@ def save_location_to_cache(name, lat, lon, tz):
     except Exception:
         pass
 
-# --- DYNAMIC DEVICE LOCATION ENGINE ---
-@st.cache_data(ttl=600, show_spinner=False)
-def fetch_device_location():
-    """Detects current device network location; falls back to San Francisco if offline."""
-    try:
-        res = requests.get("[https://ipapi.co/json/](https://ipapi.co/json/)", timeout=3).json()
-        if "latitude" in res and "longitude" in res:
-            city = res.get("city", "Current Spot")
-            region = res.get("region", "")
-            country = res.get("country_name", "")
-            display_name = f"📍 {city}, {region} ({country})"
-            return {
-                "name": display_name,
-                "lat": float(res["latitude"]),
-                "lon": float(res["longitude"]),
-                "tz": res.get("timezone", "America/Los_Angeles")
-            }
-    except Exception:
-        pass
-    
-    # Standard Fallback Location
-    return {
-        "name": "San Francisco, California, United States",
-        "lat": 37.7749,
-        "lon": -122.4194,
-        "tz": "America/Los_Angeles"
-    }
-
 # --- CACHED API FUNCTIONS ---
+
+# REVERTED & UPGRADED: Back to OpenStreetMap for landmarks, with a custom User-Agent to stop rate-limiting
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_geocoding(query):
     try:
-        payload = {"name": query, "count": 10, "language": "en", "format": "json"}
-        res = requests.get("[https://geocoding-api.open-meteo.com/v1/search](https://geocoding-api.open-meteo.com/v1/search)", params=payload, timeout=5).json()
+        headers = {"User-Agent": "AstroForecaster_Field_App/1.0"}
+        payload = {"q": query, "format": "json", "limit": 10}
+        res = requests.get("https://nominatim.openstreetmap.org/search", params=payload, headers=headers, timeout=5).json()
         
-        if res and "results" in res:
+        if res:
             formatted_results = []
-            for loc in res["results"]:
-                parts = [loc.get("name")]
-                if "admin1" in loc and loc["admin1"] != loc.get("name"):
-                    parts.append(loc["admin1"])
-                if "country" in loc:
-                    parts.append(loc["country"])
-                
-                display_name = ", ".join(filter(None, parts))
-                
+            for loc in res:
                 formatted_results.append({
-                    "name": display_name,
-                    "latitude": float(loc.get("latitude")),
-                    "longitude": float(loc.get("longitude")),
-                    "timezone": loc.get("timezone", "auto")
+                    "name": loc.get("display_name"),
+                    "latitude": float(loc.get("lat")),
+                    "longitude": float(loc.get("lon")),
+                    "timezone": "auto" # Open-Meteo handles "auto" perfectly
                 })
             return {"results": formatted_results}
         return None
@@ -104,7 +71,7 @@ def fetch_weather(lat, lon, timezone="auto"):
             "daily": "sunrise,sunset",
             "timezone": timezone, "forecast_days": 14
         }
-        return requests.get("[https://api.open-meteo.com/v1/forecast](https://api.open-meteo.com/v1/forecast)", params=payload, timeout=5).json()
+        return requests.get("https://api.open-meteo.com/v1/forecast", params=payload, timeout=5).json()
     except Exception:
         return None
 
@@ -112,14 +79,14 @@ def fetch_weather(lat, lon, timezone="auto"):
 def fetch_air_quality(lat, lon, timezone="auto"):
     try:
         payload = {"latitude": lat, "longitude": lon, "hourly": "pm2_5", "timezone": timezone, "forecast_days": 14}
-        return requests.get("[https://air-quality-api.open-meteo.com/v1/air-quality](https://air-quality-api.open-meteo.com/v1/air-quality)", params=payload, timeout=5).json()
+        return requests.get("https://air-quality-api.open-meteo.com/v1/air-quality", params=payload, timeout=5).json()
     except Exception:
         return None
 
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_waqi_live(lat, lon):
     try:
-        res = requests.get(f"[https://api.waqi.info/feed/geo](https://api.waqi.info/feed/geo):{lat};{lon}/?token={WAQI_TOKEN}", timeout=5).json()
+        res = requests.get(f"https://api.waqi.info/feed/geo:{lat};{lon}/?token={WAQI_TOKEN}", timeout=5).json()
         if res.get("status") == "ok":
             aqi = res["data"]["iaqi"].get("pm25", {}).get("v", 0)
             station = res["data"].get("city", {}).get("name", "Nearest Sensor")
@@ -131,7 +98,7 @@ def fetch_waqi_live(lat, lon):
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_elevation(lat, lon):
     try:
-        return requests.get(f"[https://api.open-meteo.com/v1/elevation?latitude=](https://api.open-meteo.com/v1/elevation?latitude=){lat}&longitude={lon}", timeout=5).json().get("elevation", [0])[0]
+        return requests.get(f"https://api.open-meteo.com/v1/elevation?latitude={lat}&longitude={lon}", timeout=5).json().get("elevation", [0])[0]
     except Exception:
         return 0
 
@@ -143,7 +110,7 @@ def fetch_model_grid(lat_str, lon_str, model_code):
             "hourly": "cloud_cover_low,cloud_cover_mid,cloud_cover_high,relative_humidity_300hPa,temperature_1000hPa,temperature_975hPa,temperature_950hPa,temperature_925hPa,temperature_900hPa,temperature_850hPa",
             "timezone": "auto", "forecast_days": 14, "models": model_code
         }
-        return requests.get("[https://api.open-meteo.com/v1/forecast](https://api.open-meteo.com/v1/forecast)", params=p_grid, timeout=10).json()
+        return requests.get("https://api.open-meteo.com/v1/forecast", params=p_grid, timeout=10).json()
     except Exception:
         return None
 
@@ -155,7 +122,7 @@ def fetch_aq_grid(lat_str, lon_str):
             "hourly": "pm2_5",
             "timezone": "auto", "forecast_days": 14
         }
-        return requests.get("[https://air-quality-api.open-meteo.com/v1/air-quality](https://air-quality-api.open-meteo.com/v1/air-quality)", params=p_aq_grid, timeout=10).json()
+        return requests.get("https://air-quality-api.open-meteo.com/v1/air-quality", params=p_aq_grid, timeout=10).json()
     except Exception:
         return None
 
@@ -168,7 +135,7 @@ def fetch_tides(lat, lon, token):
         end = start + timedelta(days=4)
         payload = {'lat': lat, 'lng': lon, 'start': start.isoformat(), 'end': end.isoformat()}
         headers = {'Authorization': token}
-        res = requests.get("[https://api.stormglass.io/v2/tide/extremes/point](https://api.stormglass.io/v2/tide/extremes/point)", params=payload, headers=headers, timeout=5).json()
+        res = requests.get("https://api.stormglass.io/v2/tide/extremes/point", params=payload, headers=headers, timeout=5).json()
         return res.get('data', [])
     except Exception:
         return []
@@ -362,50 +329,36 @@ with st.sidebar:
     mode = st.radio("Dashboard Mode:", ["🌅 Sunrise & Sunset", "🌌 Astrophotography"])
     st.divider()
     
-    input_method = st.radio("Location Entry:", ["🔍 Online Search / Auto GPS", "📂 Saved Spots (Offline Storage)", "📍 Manual Coordinates"])
+    input_method = st.radio("Location Entry:", ["🔍 Online Search", "📂 Saved Spots (Offline Storage)"])
     
     lat, lon, tz = None, None, None
     cached_db = load_saved_locations()
     
-    if input_method == "🔍 Online Search / Auto GPS":
-        # Fetch dynamic auto location on startup
-        current_loc_info = fetch_device_location()
+    if input_method == "🔍 Online Search":
         
-        if st.button("🎯 Detect Current Device Location"):
-            st.cache_data.clear()
-            current_loc_info = fetch_device_location()
-            st.success(f"Located: {current_loc_info['name']}")
-            
-        search_query = st.text_input("Enter location name:", value=current_loc_info["name"])
+        search_query = st.text_input("Enter location name:", placeholder="e.g., Lake Louise, Yosemite")
         
         if search_query:
-            if search_query == current_loc_info["name"]:
-                lat = current_loc_info["lat"]
-                lon = current_loc_info["lon"]
-                tz = current_loc_info["tz"]
-                # Save auto-detected spot to local phone cache
-                save_location_to_cache(current_loc_info["name"], lat, lon, tz)
+            with st.spinner("Searching global map database..."):
+                geo_response = fetch_geocoding(search_query)
+                
+            if not geo_response or "results" not in geo_response:
+                st.error("Location not found or offline.")
             else:
-                with st.spinner("Searching online directory..."):
-                    geo_response = fetch_geocoding(search_query)
-                    
-                if not geo_response or "results" not in geo_response:
-                    st.error("Location not found or offline.")
-                else:
-                    location_options = {}
-                    for loc in geo_response["results"]:
-                        display_name = loc.get("name", "Unknown Location")
-                        if display_name in location_options:
-                            display_name += f" ({loc['latitude']}, {loc['longitude']})"
-                        location_options[display_name] = {"lat": loc["latitude"], "lon": loc["longitude"], "tz": loc.get("timezone", "auto")}
-                    
-                    selected_loc = st.selectbox("Confirm location:", list(location_options.keys()))
-                    lat = location_options[selected_loc]["lat"]
-                    lon = location_options[selected_loc]["lon"]
-                    tz = location_options[selected_loc]["tz"]
-                    
-                    # Automatically save successfully searched location to local storage
-                    save_location_to_cache(selected_loc, lat, lon, tz)
+                location_options = {}
+                for loc in geo_response["results"]:
+                    display_name = loc.get("name", "Unknown Location")
+                    if display_name in location_options:
+                        display_name += f" ({loc['latitude']}, {loc['longitude']})"
+                    location_options[display_name] = {"lat": loc["latitude"], "lon": loc["longitude"], "tz": loc.get("timezone", "auto")}
+                
+                selected_loc = st.selectbox("Confirm location:", list(location_options.keys()))
+                lat = location_options[selected_loc]["lat"]
+                lon = location_options[selected_loc]["lon"]
+                tz = location_options[selected_loc]["tz"]
+                
+                # Automatically save successfully searched location to local storage
+                save_location_to_cache(selected_loc, lat, lon, tz)
 
     elif input_method == "📂 Saved Spots (Offline Storage)":
         st.info("📡 **Offline Storage Active:** Select any location previously searched on this device.")
@@ -417,12 +370,6 @@ with st.sidebar:
             st.success(f"Loaded: {selected_offline_spot}")
         else:
             st.warning("No spots cached in local storage yet. Search a few locations while online first!")
-            
-    else:
-        st.info("📡 **Raw Coordinate Mode:** Running on local CPU.")
-        lat = st.number_input("Latitude:", value=37.7749, format="%.4f")
-        lon = st.number_input("Longitude:", value=-122.4194, format="%.4f")
-        tz = st.text_input("Timezone (IANA):", value="America/Los_Angeles")
         
     st.divider()
     fetch_tides_toggle = st.checkbox("🌊 Fetch Coastal Tides", value=False, help="Consumes 1 Stormglass API Call")
@@ -430,7 +377,9 @@ with st.sidebar:
 # --- MAIN DASHBOARD START ---
 st.title("🏔️ Landscape & Astro Forecaster")
 
-if lat is not None and lon is not None and tz is not None:
+if lat is None or lon is None or tz is None:
+    st.info("👈 Open the sidebar menu to search for a location or load a saved spot.")
+else:
     with st.spinner('Loading environment data...'):
         base_data = fetch_weather(lat, lon, tz)
         aq_data = fetch_air_quality(lat, lon, tz)
@@ -672,7 +621,7 @@ if lat is not None and lon is not None and tz is not None:
 
         with tab_clouds:
             st.write("Ensure exact window remains clear of incoming cloud banks.")
-            windy_html = f'<iframe width="100%" height="500" src="[https://embed.windy.com/embed2.html?lat=](https://embed.windy.com/embed2.html?lat=){lat}&lon={lon}&zoom=7&level=surface&overlay=clouds&product=ecmwf&menu=&message=true&marker=true&calendar=now&pressure=&type=map&location=coordinates&detail=&metricWind=km%2Fh&metricTemp=%C2%B0C&radarRange=-1" frameborder="0"></iframe>'
+            windy_html = f'<iframe width="100%" height="500" src="https://embed.windy.com/embed2.html?lat={lat}&lon={lon}&zoom=7&level=surface&overlay=clouds&product=ecmwf&menu=&message=true&marker=true&calendar=now&pressure=&type=map&location=coordinates&detail=&metricWind=km%2Fh&metricTemp=%C2%B0C&radarRange=-1" frameborder="0"></iframe>'
             components.html(windy_html, height=500)
 
     # ==========================================
@@ -794,5 +743,5 @@ if lat is not None and lon is not None and tz is not None:
                 st.info("No tidal data available (inland elevation).")
             
             st.write("☁️ **Live Cloud Movement & Tracking**")
-            windy_html = f'<iframe width="100%" height="500" src="[https://embed.windy.com/embed2.html?lat=](https://embed.windy.com/embed2.html?lat=){lat}&lon={lon}&zoom=7&level=surface&overlay=clouds&product=ecmwf&menu=&message=true&marker=true&calendar=now&pressure=&type=map&location=coordinates&detail=&metricWind=km%2Fh&metricTemp=%C2%B0C&radarRange=-1" frameborder="0"></iframe>'
+            windy_html = f'<iframe width="100%" height="500" src="https://embed.windy.com/embed2.html?lat={lat}&lon={lon}&zoom=7&level=surface&overlay=clouds&product=ecmwf&menu=&message=true&marker=true&calendar=now&pressure=&type=map&location=coordinates&detail=&metricWind=km%2Fh&metricTemp=%C2%B0C&radarRange=-1" frameborder="0"></iframe>'
             components.html(windy_html, height=500)
