@@ -6,6 +6,7 @@ import pydeck as pdk
 import itertools
 import math
 import numpy as np
+import streamlit.components.v1 as components
 
 # --- 1. Page Setup ---
 st.set_page_config(page_title="Light & Fog Predictor", page_icon="🏔️", layout="centered")
@@ -149,10 +150,6 @@ SMOKE_CMAP = [[246, 232, 195], [223, 194, 125], [191, 129, 45], [140, 81, 10], [
 FOG_CMAP = [[237, 248, 251], [178, 226, 226], [102, 194, 164], [44, 162, 95], [0, 109, 44]]
 
 def interpolate_dense_grid(orig_data, value_key, cmap, max_v, step):
-    """
-    Interpolates the 10x10 API grid using a Gaussian Radial Basis Function (RBF)
-    to create ultra-smooth meteorological gradients without bullseye artifacts.
-    """
     points = [d for d in orig_data if value_key in d]
     if not points: return None
     
@@ -162,7 +159,7 @@ def interpolate_dense_grid(orig_data, value_key, cmap, max_v, step):
     
     if np.max(o_vals) <= 0: return None
         
-    grid_size = 75 # Bumped for higher fidelity smoothing
+    grid_size = 75 
     
     min_lat, max_lat = np.min(o_lats) - (step/2), np.max(o_lats) + (step/2)
     min_lon, max_lon = np.min(o_lons) - (step/2), np.max(o_lons) + (step/2)
@@ -172,7 +169,6 @@ def interpolate_dense_grid(orig_data, value_key, cmap, max_v, step):
     glons, glats = np.meshgrid(lon_array, lat_array)
     dense_lons, dense_lats = glons.flatten(), glats.flatten()
     
-    # 2% overlap to permanently hide WebGL hairline seams
     hw = ((max_lon - min_lon) / (grid_size - 1) / 2.0) * 1.02
     hh = ((max_lat - min_lat) / (grid_size - 1) / 2.0) * 1.02
     
@@ -180,8 +176,7 @@ def interpolate_dense_grid(orig_data, value_key, cmap, max_v, step):
     d_lat = dense_lats[:, np.newaxis] - o_lats[np.newaxis, :]
     dist = np.sqrt(d_lon**2 + d_lat**2)
     
-    # --- RADAR SMOOTHING ALGORITHM (Gaussian RBF) ---
-    sigma = step * 1.2 # Spread multiplier to perfectly bridge the coordinate gaps
+    sigma = step * 1.2 
     weights = np.exp(-(dist**2) / (2 * sigma**2))
     
     weight_sums = np.sum(weights, axis=1)
@@ -203,7 +198,7 @@ def interpolate_dense_grid(orig_data, value_key, cmap, max_v, step):
         g = int(cmap[lower][1] * (1 - color_weight) + cmap[upper][1] * color_weight)
         b = int(cmap[lower][2] * (1 - color_weight) + cmap[upper][2] * color_weight)
         
-        alpha = int(max(0, min(150, pct * 255))) # Max 150/255 keeps the base map highly readable
+        alpha = int(max(0, min(150, pct * 255))) 
         
         lon, lat = float(dense_lons[i]), float(dense_lats[i])
         polygon = [
@@ -221,10 +216,9 @@ def interpolate_dense_grid(orig_data, value_key, cmap, max_v, step):
         get_fill_color='color',
         filled=True,
         stroked=False,
-        wireframe=False, # Essential for smooth rendering
+        wireframe=False, 
         pickable=False
     )
-
 
 # --- UNIFIED CELESTIAL MATH ENGINE (100% OFFLINE) ---
 def get_celestial_az_alt(lat, lon, local_time, tz_string, target="galactic_core"):
@@ -610,6 +604,19 @@ if search_query:
                         else:
                             st.error("No valid map data could be rendered. The API might be offline for this specific region.")
 
+                # --- LIVE CLOUD MOVEMENT EMBED ---
+                st.divider()
+                st.subheader("☁️ Live Cloud Movement & Tracking")
+                st.write("Cross-reference the mathematical burn potential above with actual cloud flow over the next 3 days.")
+                
+                windy_html = f"""
+                <iframe width="100%" height="500" 
+                    src="https://embed.windy.com/embed.html?type=map&location=coordinates&metricRain=mm&metricTemp=°C&metricWind=km/h&zoom=7&overlay=clouds&product=ecmwf&level=surface&lat={lat}&lon={lon}&detailLat={lat}&detailLon={lon}&detail=true&marker=true" 
+                    frameborder="0">
+                </iframe>
+                """
+                components.html(windy_html, height=500)
+
 
         # ==========================================
         # MODE 2: ASTROPHOTOGRAPHY
@@ -718,3 +725,16 @@ if search_query:
                 ]
             ))
             st.caption("🟠 Orange Line = Sun Direction | ⚪ White Line = Moon Direction | 🟣/🟡 Dots = Milky Way Core")
+            
+            # --- LIVE CLOUD MOVEMENT EMBED (ASTRO) ---
+            st.divider()
+            st.subheader("☁️ Live Cloud Movement & Tracking")
+            st.write("Ensure the exact window of your astrophotography shoot remains completely clear of incoming cloud banks.")
+            
+            windy_html = f"""
+            <iframe width="100%" height="500" 
+                src="https://embed.windy.com/embed.html?type=map&location=coordinates&metricRain=mm&metricTemp=°C&metricWind=km/h&zoom=7&overlay=clouds&product=ecmwf&level=surface&lat={lat}&lon={lon}&detailLat={lat}&detailLon={lon}&detail=true&marker=true" 
+                frameborder="0">
+            </iframe>
+            """
+            components.html(windy_html, height=500)
