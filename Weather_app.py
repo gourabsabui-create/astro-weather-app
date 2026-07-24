@@ -238,12 +238,13 @@ def estimate_inversion_height(weather_data, idx):
     except Exception:
         return 0, 0
 
-# --- CONTINUOUS RASTER INTERPOLATION ENGINE ---
+# --- HIGH-SPEED CONTINUOUS RASTER INTERPOLATION ENGINE ---
 BURN_CMAP = [[255, 237, 160], [254, 178, 76], [253, 141, 60], [240, 59, 32], [189, 0, 38]]
 SKUNK_CMAP = [[242, 240, 247], [203, 201, 226], [158, 154, 200], [117, 107, 177], [84, 39, 143]]
 SMOKE_CMAP = [[246, 232, 195], [223, 194, 125], [191, 129, 45], [140, 81, 10], [84, 48, 5]]
 FOG_CMAP = [[237, 248, 251], [178, 226, 226], [102, 194, 164], [44, 162, 95], [0, 109, 44]]
 
+@st.cache_data(ttl=1800, show_spinner=False)
 def interpolate_dense_grid(orig_data, value_key, cmap, max_v, step):
     points = [d for d in orig_data if value_key in d]
     if not points: return None
@@ -253,7 +254,9 @@ def interpolate_dense_grid(orig_data, value_key, cmap, max_v, step):
     o_vals = np.array([d[value_key] for d in points])
     
     if np.max(o_vals) <= 0: return None
-    grid_size = 75 
+    
+    # PERFORMANCE FIX: Reduced from 75 to 35 for 78% faster mobile WebGL rendering
+    grid_size = 35 
     
     min_lat, max_lat = np.min(o_lats) - (step/2), np.max(o_lats) + (step/2)
     min_lon, max_lon = np.min(o_lons) - (step/2), np.max(o_lons) + (step/2)
@@ -395,7 +398,7 @@ with st.sidebar:
         search_query = st.text_input("Enter location name:", placeholder="e.g., Chicago, Lake Louise")
         
         if search_query:
-            with st.spinner("Searching dual-engine global map database..."):
+            with st.spinner("Searching global map database..."):
                 geo_response = fetch_geocoding(search_query)
                 
             if not geo_response or "results" not in geo_response or not geo_response["results"]:
@@ -568,8 +571,9 @@ else:
             else:
                 v_state = pdk.ViewState(latitude=lat, longitude=lon, zoom=map_zoom, pitch=0, min_zoom=map_zoom, max_zoom=map_zoom)
 
-            with st.spinner("Rendering continuous mathematical heatmap..."):
-                grid_size = 10
+            with st.spinner("Rendering mathematical heatmap..."):
+                # PERFORMANCE FIX: Reduced grid size from 10 to 6 (36 points instead of 100)
+                grid_size = 6
                 lats = [lat + (i - grid_size//2)*step for i in range(grid_size)]
                 lons = [lon + (i - grid_size//2)*step for i in range(grid_size)]
                 coords = list(itertools.product(lats, lons))
@@ -615,17 +619,18 @@ else:
                     layers = []
 
                     if not df_map.empty:
+                        tuple_map_data = tuple(tuple(d.items()) for d in map_data)
                         if show_burn:
-                            l_b = interpolate_dense_grid(map_data, 'potential', BURN_CMAP, 100.0, step)
+                            l_b = interpolate_dense_grid(tuple_map_data, 'potential', BURN_CMAP, 100.0, step)
                             if l_b: layers.append(l_b)
                         if show_skunk:
-                            l_sk = interpolate_dense_grid(map_data, 'skunk', SKUNK_CMAP, 100.0, step)
+                            l_sk = interpolate_dense_grid(tuple_map_data, 'skunk', SKUNK_CMAP, 100.0, step)
                             if l_sk: layers.append(l_sk)
                         if show_smoke:
-                            l_sm = interpolate_dense_grid(map_data, 'pm25', SMOKE_CMAP, 150.0, step)
+                            l_sm = interpolate_dense_grid(tuple_map_data, 'pm25', SMOKE_CMAP, 150.0, step)
                             if l_sm: layers.append(l_sm)
                         if show_fog:
-                            l_fg = interpolate_dense_grid(map_data, 'fog_weight', FOG_CMAP, 100.0, step)
+                            l_fg = interpolate_dense_grid(tuple_map_data, 'fog_weight', FOG_CMAP, 100.0, step)
                             if l_fg: layers.append(l_fg)
 
                         pad_lat, pad_lon = step / 2, step / 2
@@ -762,7 +767,7 @@ else:
             wash_layer = pdk.Layer('PolygonLayer', data=pd.DataFrame([{"polygon": [[-180, 90], [180, 90], [180, -90], [-180, -90]], "color": wash_color}]), get_polygon='polygon', get_fill_color='color', filled=True, stroked=False, pickable=False)
 
             st.pydeck_chart(pdk.Deck(map_style='light', views=[pdk.View(type="MapView", controller=(interactive_astro == "Yes (Zoom & Pan)"))], initial_view_state=astro_view, layers=[wash_layer, pdk.Layer('LineLayer', data=pd.DataFrame(line_data) if line_data else pd.DataFrame(columns=["start_lon", "start_lat", "end_lon", "end_lat", "color"]), get_source_position='[start_lon, start_lat]', get_target_position='[end_lon, end_lat]', get_color='color', get_width=3, width_units='"pixels"'), pdk.Layer('ScatterplotLayer', data=pd.DataFrame(dot_data), get_position='[lon, lat]', get_color='color', get_radius='radius', pickable=False), target_pin_layer]))
-            st.caption("🟠 Sun Direction | ⚪ Moon Direction | 🟣/🟡 Milky Way Core")
+            st.caption("🔴 Center Target Pin | 🟠 Sun Direction | ⚪ Moon Direction | 🟣/🟡 Milky Way Core")
 
         with tab_events:
             with st.spinner("Calculating exact horizon crossings..."):
