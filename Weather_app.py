@@ -14,7 +14,7 @@ st.title("🏔️ Landscape & Astro Forecaster")
 st.caption("Multi-model consensus | Celestial Tracking | Live Ground Sensors")
 
 WAQI_TOKEN = "demo" # Replace with a free token from aqicn.org if you hit rate limits
-STORMGLASS_TOKEN = "demo" # Replace with a free token from stormglass.io for global tide data
+STORMGLASS_TOKEN = "41a49954-877a-11f1-bcd5-0242ac120004-41a499e0-877a-11f1-bcd5-0242ac120004" # Replace with a free token from stormglass.io for global tide data
 
 # --- CACHED API FUNCTIONS (OFFLINE MODE FAILSAFE) ---
 @st.cache_data(ttl=3600, show_spinner=False)
