@@ -114,7 +114,7 @@ def aqi_to_pm25(aqi):
     elif aqi <= 200: return 55.4 + (aqi - 150) * (95.0 / 50.0)
     else: return 150.4 + (aqi - 200) * (100.0 / 100.0)
 
-# --- UPGRADED MARINE LAYER / FOG ENGINE ---
+# --- EXACT GRANULAR FOG / MARINE LAYER ENGINE ---
 def estimate_inversion_height(weather_data, idx):
     try:
         levels = [(100, "temperature_1000hPa"), (300, "temperature_975hPa"), (500, "temperature_950hPa"), 
@@ -142,16 +142,17 @@ def estimate_inversion_height(weather_data, idx):
     except:
         return 0, 0
 
-# --- CONTINUOUS IDW SPATIAL INTERPOLATION ENGINE ---
+# --- CONTINUOUS RASTER (FLUSH POLYGON) INTERPOLATION ENGINE ---
 BURN_CMAP = [[255, 237, 160], [254, 178, 76], [253, 141, 60], [240, 59, 32], [189, 0, 38]]
 SKUNK_CMAP = [[242, 240, 247], [203, 201, 226], [158, 154, 200], [117, 107, 177], [84, 39, 143]]
 SMOKE_CMAP = [[246, 232, 195], [223, 194, 125], [191, 129, 45], [140, 81, 10], [84, 48, 5]]
 FOG_CMAP = [[237, 248, 251], [178, 226, 226], [102, 194, 164], [44, 162, 95], [0, 109, 44]]
 
-def interpolate_dense_grid(orig_data, value_key, cmap, max_v, cell_size_m):
+def interpolate_dense_grid(orig_data, value_key, cmap, max_v):
     """
-    Interpolates the 10x10 API grid into a 40x40 high-resolution matrix.
-    Prevents PyDeck heatmaps from splitting into circles when zoomed in.
+    Interpolates the 10x10 API grid into a flush 50x50 Polygon layer.
+    Fixes the 'polka-dot' visual bug and prevents opacity stacking 
+    so the map stays readable.
     """
     points = [d for d in orig_data if value_key in d]
     if not points: return None
@@ -162,12 +163,23 @@ def interpolate_dense_grid(orig_data, value_key, cmap, max_v, cell_size_m):
     
     if np.max(o_vals) <= 0: return None
         
-    grid_size = 40
-    min_lat, max_lat = np.min(o_lats), np.max(o_lats)
-    min_lon, max_lon = np.min(o_lons), np.max(o_lons)
+    grid_size = 50
     
-    glons, glats = np.meshgrid(np.linspace(min_lon, max_lon, grid_size), np.linspace(min_lat, max_lat, grid_size))
+    # Calculate step of the original 10x10 grid to extend the bounding box perfectly
+    orig_step_lat = (np.max(o_lats) - np.min(o_lats)) / 9.0
+    orig_step_lon = (np.max(o_lons) - np.min(o_lons)) / 9.0
+    
+    min_lat, max_lat = np.min(o_lats) - (orig_step_lat/2), np.max(o_lats) + (orig_step_lat/2)
+    min_lon, max_lon = np.min(o_lons) - (orig_step_lon/2), np.max(o_lons) + (orig_step_lon/2)
+    
+    lon_array = np.linspace(min_lon, max_lon, grid_size)
+    lat_array = np.linspace(min_lat, max_lat, grid_size)
+    glons, glats = np.meshgrid(lon_array, lat_array)
     dense_lons, dense_lats = glons.flatten(), glats.flatten()
+    
+    # Calculate half-widths for the flush polygons
+    hw = (max_lon - min_lon) / (grid_size - 1) / 2.0
+    hh = (max_lat - min_lat) / (grid_size - 1) / 2.0
     
     # Mathematical spatial blending (Inverse Distance Weighting)
     d_lon = dense_lons[:, np.newaxis] - o_lons[np.newaxis, :]
@@ -194,19 +206,28 @@ def interpolate_dense_grid(orig_data, value_key, cmap, max_v, cell_size_m):
         g = int(cmap[lower][1] * (1 - weight) + cmap[upper][1] * weight)
         b = int(cmap[lower][2] * (1 - weight) + cmap[upper][2] * weight)
         
-        # Dynamic transparency based on intensity
-        alpha = int(max(40, min(180, pct * 255)))
+        # Capped Alpha: Maxes out at 130 (~50% opacity) so map names stay visible!
+        alpha = int(max(0, min(130, pct * 220)))
         
-        out_data.append({"lat": float(dense_lats[i]), "lon": float(dense_lons[i]), "color": [r, g, b, alpha]})
+        lon, lat = float(dense_lons[i]), float(dense_lats[i])
+        polygon = [
+            [lon - hw, lat - hh],
+            [lon + hw, lat - hh],
+            [lon + hw, lat + hh],
+            [lon - hw, lat + hh]
+        ]
+        out_data.append({"polygon": polygon, "color": [r, g, b, alpha]})
         
     return pdk.Layer(
-        'ScatterplotLayer',
+        'PolygonLayer',
         data=pd.DataFrame(out_data),
-        get_position='[lon, lat]',
-        get_color='color',
-        get_radius=cell_size_m * 1.5, # Locked geographical radius ensures seamless blending
+        get_polygon='polygon',
+        get_fill_color='color',
+        filled=True,
+        stroked=False, 
         pickable=False
     )
+
 
 # --- UNIFIED CELESTIAL MATH ENGINE (100% OFFLINE) ---
 def get_celestial_az_alt(lat, lon, local_time, tz_string, target="galactic_core"):
@@ -460,11 +481,6 @@ if search_query:
                     coords = list(itertools.product(lats, lons))
                     lat_str, lon_str = ",".join(str(round(c[0], 4)) for c in coords), ",".join(str(round(c[1], 4)) for c in coords)
                     
-                    # Calculate exactly how large the interpolated data pixels need to be in physical space
-                    deg_width = ((max(lons) + step) - (min(lons) - step)) / 40
-                    center_lat = (min(lats) + max(lats)) / 2
-                    cell_size_m = deg_width * 111000 * math.cos(math.radians(center_lat))
-
                     grid_res = fetch_model_grid(lat_str, lon_str, "best_match")
                     aq_grid_res = fetch_aq_grid(lat_str, lon_str)
                     
@@ -524,24 +540,22 @@ if search_query:
                         layers = []
 
                         if not df_map.empty:
-                            # Feed the IDW logic directly into physically scaled ScatterplotLayers
                             if show_burn:
-                                l_b = interpolate_dense_grid(map_data, 'potential', BURN_CMAP, 100.0, cell_size_m)
+                                l_b = interpolate_dense_grid(map_data, 'potential', BURN_CMAP, 100.0)
                                 if l_b: layers.append(l_b)
                                 
                             if show_skunk:
-                                l_sk = interpolate_dense_grid(map_data, 'skunk', SKUNK_CMAP, 100.0, cell_size_m)
+                                l_sk = interpolate_dense_grid(map_data, 'skunk', SKUNK_CMAP, 100.0)
                                 if l_sk: layers.append(l_sk)
                                 
                             if show_smoke:
-                                l_sm = interpolate_dense_grid(map_data, 'pm25', SMOKE_CMAP, 150.0, cell_size_m)
+                                l_sm = interpolate_dense_grid(map_data, 'pm25', SMOKE_CMAP, 150.0)
                                 if l_sm: layers.append(l_sm)
                                 
                             if show_fog:
-                                l_fg = interpolate_dense_grid(map_data, 'fog_weight', FOG_CMAP, 100.0, cell_size_m)
+                                l_fg = interpolate_dense_grid(map_data, 'fog_weight', FOG_CMAP, 100.0)
                                 if l_fg: layers.append(l_fg)
 
-                            # --- THE VIGNETTE MASK ---
                             pad_lat = step / 2
                             pad_lon = step / 2
                             min_lon, max_lon = min(lons), max(lons)
@@ -571,7 +585,6 @@ if search_query:
                                 pickable=False
                             ))
 
-                            # --- THE INVISIBLE INTERACTIVE TOOLTIP LAYER ---
                             r_mult = step / 0.08
                             layers.append(pdk.Layer(
                                 'ScatterplotLayer',
