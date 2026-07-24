@@ -92,9 +92,10 @@ gps_locator = components.declare_component("gps_locator", path="gps_component")
 # --- DUAL-ENGINE GEOCODER (OpenStreetMap + Open-Meteo Fallback) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_geocoding(query):
+    # Expanded limits to 10 for better search variety
     try:
         headers = {"User-Agent": "AstroFieldApp_Mobile/2.0 (contact@example.com)"}
-        payload = {"q": query, "format": "json", "limit": 5}
+        payload = {"q": query, "format": "json", "limit": 10}
         res_osm = requests.get("https://nominatim.openstreetmap.org/search", params=payload, headers=headers, timeout=5).json()
         
         if res_osm and isinstance(res_osm, list) and len(res_osm) > 0:
@@ -103,7 +104,7 @@ def fetch_geocoding(query):
         pass
 
     try:
-        payload = {"name": query, "count": 5, "language": "en", "format": "json"}
+        payload = {"name": query, "count": 10, "language": "en", "format": "json"}
         res_meteo = requests.get("https://geocoding-api.open-meteo.com/v1/search", params=payload, timeout=5).json()
         
         if res_meteo and "results" in res_meteo:
@@ -255,7 +256,6 @@ def interpolate_dense_grid(orig_data, value_key, cmap, max_v, step):
     
     if np.max(o_vals) <= 0: return None
     
-    # PERFORMANCE FIX: Reduced from 75 to 35 for 78% faster mobile WebGL rendering
     grid_size = 35 
     
     min_lat, max_lat = np.min(o_lats) - (step/2), np.max(o_lats) + (step/2)
@@ -383,6 +383,7 @@ def create_vector_line(lat, lon, azimuth, length_deg, color):
     end_lon = lon + length_deg * math.sin(math.radians(azimuth)) / math.cos(math.radians(lat))
     return {"start_lon": lon, "start_lat": lat, "end_lon": end_lon, "end_lat": end_lat, "color": color}
 
+
 # --- MOBILE COMPACT SIDEBAR UI ---
 with st.sidebar:
     st.title("⚙️ Setup & Location")
@@ -391,7 +392,7 @@ with st.sidebar:
     
     input_method = st.radio("Location Entry:", ["🔍 Online Search", "📂 Saved Spots (Offline Storage)", "🛰️ Live GPS Sensor"])
     
-    lat, lon, tz = None, None, None
+    lat, lon, tz, active_location_name = None, None, None, None
     cached_db = load_saved_locations()
     
     if input_method == "🔍 Online Search":
@@ -407,24 +408,32 @@ with st.sidebar:
                 location_options = {}
                 for loc in geo_response["results"]:
                     display_name = loc.get("name", "Unknown Location")
-                    if display_name in location_options:
-                        display_name += f" ({loc['latitude']}, {loc['longitude']})"
-                    location_options[display_name] = {"lat": loc["latitude"], "lon": loc["longitude"], "tz": loc.get("timezone", "auto")}
+                    # Build unique key to prevent dictionary overwrites
+                    unique_name = f"{display_name} ({loc['latitude']:.2f}, {loc['longitude']:.2f})"
+                    location_options[unique_name] = {
+                        "lat": loc["latitude"], 
+                        "lon": loc["longitude"], 
+                        "tz": loc.get("timezone", "auto"),
+                        "clean_name": display_name
+                    }
                 
-                selected_loc = st.selectbox("Confirm location:", list(location_options.keys()))
+                # BUG FIX: Replaced glitchy mobile selectbox with touch-friendly radio buttons
+                selected_loc = st.radio("Select exact match:", list(location_options.keys()))
                 lat = location_options[selected_loc]["lat"]
                 lon = location_options[selected_loc]["lon"]
                 tz = location_options[selected_loc]["tz"]
+                active_location_name = location_options[selected_loc]["clean_name"]
                 
-                save_location_to_cache(selected_loc, lat, lon, tz)
+                save_location_to_cache(active_location_name, lat, lon, tz)
 
     elif input_method == "📂 Saved Spots (Offline Storage)":
         st.info("📡 **Offline Storage Active:** Select any location previously searched on this device.")
         if cached_db:
-            selected_offline_spot = st.selectbox("Select Saved Spot:", list(cached_db.keys()))
+            selected_offline_spot = st.radio("Select Saved Spot:", list(cached_db.keys()))
             lat = cached_db[selected_offline_spot]["lat"]
             lon = cached_db[selected_offline_spot]["lon"]
             tz = cached_db[selected_offline_spot]["tz"]
+            active_location_name = selected_offline_spot
             st.success(f"Loaded: {selected_offline_spot}")
         else:
             st.warning("No spots cached in local storage yet. Search a few locations while online first!")
@@ -438,8 +447,9 @@ with st.sidebar:
             lat = float(gps_data["lat"])
             lon = float(gps_data["lon"])
             tz = "auto"
+            active_location_name = f"Live GPS Lock ({lat:.4f}, {lon:.4f})"
             st.success(f"✅ GPS Lock Acquired: {lat}, {lon}")
-            save_location_to_cache(f"GPS Spot ({lat}, {lon})", lat, lon, tz)
+            save_location_to_cache(active_location_name, lat, lon, tz)
         
     st.divider()
     fetch_tides_toggle = st.checkbox("🌊 Fetch Coastal Tides", value=False, help="Consumes 1 Stormglass API Call")
@@ -450,6 +460,10 @@ st.title("🏔️ Landscape & Astro Forecaster")
 if lat is None or lon is None or tz is None:
     st.info("👈 Open the sidebar menu to search for a location or auto-feed your GPS.")
 else:
+    # Feature Request: Print exact location prominently at the top
+    st.markdown(f"### 📍 {active_location_name}")
+    st.divider()
+
     with st.spinner('Loading environment data...'):
         base_data = fetch_weather(lat, lon, tz)
         aq_data = fetch_air_quality(lat, lon, tz)
@@ -571,8 +585,7 @@ else:
             else:
                 v_state = pdk.ViewState(latitude=lat, longitude=lon, zoom=map_zoom, pitch=0, min_zoom=map_zoom, max_zoom=map_zoom)
 
-            with st.spinner("Rendering mathematical heatmap..."):
-                # PERFORMANCE FIX: Reduced grid size from 10 to 6 (36 points instead of 100)
+            with st.spinner("Rendering continuous mathematical heatmap..."):
                 grid_size = 6
                 lats = [lat + (i - grid_size//2)*step for i in range(grid_size)]
                 lons = [lon + (i - grid_size//2)*step for i in range(grid_size)]
