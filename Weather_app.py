@@ -5,6 +5,7 @@ import pandas as pd
 import pydeck as pdk
 import itertools
 import math
+import numpy as np
 
 # --- 1. Page Setup ---
 st.set_page_config(page_title="Light & Fog Predictor", page_icon="🏔️", layout="centered")
@@ -115,10 +116,6 @@ def aqi_to_pm25(aqi):
 
 # --- UPGRADED MARINE LAYER / FOG ENGINE ---
 def estimate_inversion_height(weather_data, idx):
-    """
-    Finds the exact base of the thermal inversion to determine the accurate 
-    ceiling of the marine layer/fog deck, avoiding absolute peak overshoots.
-    """
     try:
         levels = [(100, "temperature_1000hPa"), (300, "temperature_975hPa"), (500, "temperature_950hPa"), 
                   (800, "temperature_925hPa"), (1000, "temperature_900hPa"), (1500, "temperature_850hPa")]
@@ -130,7 +127,6 @@ def estimate_inversion_height(weather_data, idx):
         prev_temp = surface_temp
         for alt, key in levels[1:]:
             t = safe_val(weather_data, key, idx)
-            # Find the altitude where the temperature first starts warming (The Fog Ceiling)
             if t > prev_temp and inversion_base_alt == 0:
                 inversion_base_alt = alt 
             if t > peak_temp:
@@ -145,6 +141,72 @@ def estimate_inversion_height(weather_data, idx):
         return 0, 0
     except:
         return 0, 0
+
+# --- CONTINUOUS IDW SPATIAL INTERPOLATION ENGINE ---
+BURN_CMAP = [[255, 237, 160], [254, 178, 76], [253, 141, 60], [240, 59, 32], [189, 0, 38]]
+SKUNK_CMAP = [[242, 240, 247], [203, 201, 226], [158, 154, 200], [117, 107, 177], [84, 39, 143]]
+SMOKE_CMAP = [[246, 232, 195], [223, 194, 125], [191, 129, 45], [140, 81, 10], [84, 48, 5]]
+FOG_CMAP = [[237, 248, 251], [178, 226, 226], [102, 194, 164], [44, 162, 95], [0, 109, 44]]
+
+def interpolate_dense_grid(orig_data, value_key, cmap, max_v, cell_size_m):
+    """
+    Interpolates the 10x10 API grid into a 40x40 high-resolution matrix.
+    Prevents PyDeck heatmaps from splitting into circles when zoomed in.
+    """
+    points = [d for d in orig_data if value_key in d]
+    if not points: return None
+    
+    o_lats = np.array([d['lat'] for d in points])
+    o_lons = np.array([d['lon'] for d in points])
+    o_vals = np.array([d[value_key] for d in points])
+    
+    if np.max(o_vals) <= 0: return None
+        
+    grid_size = 40
+    min_lat, max_lat = np.min(o_lats), np.max(o_lats)
+    min_lon, max_lon = np.min(o_lons), np.max(o_lons)
+    
+    glons, glats = np.meshgrid(np.linspace(min_lon, max_lon, grid_size), np.linspace(min_lat, max_lat, grid_size))
+    dense_lons, dense_lats = glons.flatten(), glats.flatten()
+    
+    # Mathematical spatial blending (Inverse Distance Weighting)
+    d_lon = dense_lons[:, np.newaxis] - o_lons[np.newaxis, :]
+    d_lat = dense_lats[:, np.newaxis] - o_lats[np.newaxis, :]
+    dist = np.sqrt(d_lon**2 + d_lat**2)
+    dist[dist == 0] = 1e-10
+    
+    weights = 1.0 / (dist ** 2)
+    dense_vals = np.sum(weights * o_vals[np.newaxis, :], axis=1) / np.sum(weights, axis=1)
+    
+    out_data = []
+    for i in range(len(dense_vals)):
+        v = dense_vals[i]
+        if v < 1: continue 
+        
+        # Smooth RGB Linear Interpolation
+        pct = max(0.0, min(1.0, v / max_v))
+        idx = pct * (len(cmap) - 1)
+        lower = int(math.floor(idx))
+        upper = int(math.ceil(idx))
+        weight = idx - lower
+        
+        r = int(cmap[lower][0] * (1 - weight) + cmap[upper][0] * weight)
+        g = int(cmap[lower][1] * (1 - weight) + cmap[upper][1] * weight)
+        b = int(cmap[lower][2] * (1 - weight) + cmap[upper][2] * weight)
+        
+        # Dynamic transparency based on intensity
+        alpha = int(max(40, min(180, pct * 255)))
+        
+        out_data.append({"lat": float(dense_lats[i]), "lon": float(dense_lons[i]), "color": [r, g, b, alpha]})
+        
+    return pdk.Layer(
+        'ScatterplotLayer',
+        data=pd.DataFrame(out_data),
+        get_position='[lon, lat]',
+        get_color='color',
+        get_radius=cell_size_m * 1.5, # Locked geographical radius ensures seamless blending
+        pickable=False
+    )
 
 # --- UNIFIED CELESTIAL MATH ENGINE (100% OFFLINE) ---
 def get_celestial_az_alt(lat, lon, local_time, tz_string, target="galactic_core"):
@@ -327,7 +389,6 @@ if search_query:
                     c2.metric("🦨 SKUNK CHANCE", f"{avg_skunk}%")
                     
                     inv_dt, inv_alt = estimate_inversion_height(base_data, baseline_idx)
-                    # UI FOG FIX: Require low cloud cover logic here too
                     local_low_clouds = safe_val(base_data, "cloud_cover_low", baseline_idx)
                     
                     if inv_dt > 0 and local_low_clouds > 10:
@@ -374,12 +435,9 @@ if search_query:
                 
                 step_dict = {"Micro (~20km)": 0.02, "Local (~45km)": 0.04, "Regional (~90km)": 0.08, "Macro (~160km)": 0.15}
                 zoom_dict = {"Micro (~20km)": 9.5, "Local (~45km)": 8.5, "Regional (~90km)": 7.5, "Macro (~160km)": 6.5}
-                heat_radius_dict = {"Micro (~20km)": 150, "Local (~45km)": 100, "Regional (~90km)": 75, "Macro (~160km)": 55}
                 
                 step = step_dict[zoom_level]
                 map_zoom = zoom_dict[zoom_level]
-                heat_radius = heat_radius_dict[zoom_level]
-                r_mult = step / 0.08 
                 
                 if is_interactive:
                     v_state = pdk.ViewState(latitude=lat, longitude=lon, zoom=map_zoom, pitch=0)
@@ -395,12 +453,17 @@ if search_query:
                 show_smoke = c_sm.checkbox("🌲 Smoke", value=True)
                 show_fog = c_f.checkbox("☁️ Fog", value=False)
 
-                with st.spinner("Rendering cached continuous heat map..."):
+                with st.spinner("Rendering cached continuous mathematical heatmap..."):
                     grid_size = 10
                     lats = [lat + (i - grid_size//2)*step for i in range(grid_size)]
                     lons = [lon + (i - grid_size//2)*step for i in range(grid_size)]
                     coords = list(itertools.product(lats, lons))
                     lat_str, lon_str = ",".join(str(round(c[0], 4)) for c in coords), ",".join(str(round(c[1], 4)) for c in coords)
+                    
+                    # Calculate exactly how large the interpolated data pixels need to be in physical space
+                    deg_width = ((max(lons) + step) - (min(lons) - step)) / 40
+                    center_lat = (min(lats) + max(lats)) / 2
+                    cell_size_m = deg_width * 111000 * math.cos(math.radians(center_lat))
 
                     grid_res = fetch_model_grid(lat_str, lon_str, "best_match")
                     aq_grid_res = fetch_aq_grid(lat_str, lon_str)
@@ -435,9 +498,7 @@ if search_query:
                                 
                                 inv_dt_grid, inv_alt_grid = estimate_inversion_height(loc_w, idx)
                                 
-                                # --- FOG DISTRIBUTION FIX (BIND TO MOISTURE) ---
                                 if inv_dt_grid > 0 and l_low > 5:
-                                    # Multiply the physical inversion strength by the actual presence of low clouds
                                     fog_intensity = min(100, (l_low / 100.0) * (inv_dt_grid * 25))
                                     inv_alt_ft_grid = round(inv_alt_grid * 3.28084)
                                     fog_details = f"~{inv_alt_grid}m ({inv_alt_ft_grid:,} ft) [+{inv_dt_grid}°C]"
@@ -463,50 +524,24 @@ if search_query:
                         layers = []
 
                         if not df_map.empty:
-                            if show_burn and not df_map[df_map['potential'] > 0].empty:
-                                layers.append(pdk.Layer(
-                                    'HeatmapLayer',
-                                    data=df_map[df_map['potential'] > 0],
-                                    get_position='[lon, lat]',
-                                    get_weight='potential',
-                                    opacity=0.6,
-                                    radiusPixels=heat_radius,
-                                    colorRange=[[255, 237, 160], [254, 178, 76], [253, 141, 60], [240, 59, 32], [189, 0, 38]]
-                                ))
+                            # Feed the IDW logic directly into physically scaled ScatterplotLayers
+                            if show_burn:
+                                l_b = interpolate_dense_grid(map_data, 'potential', BURN_CMAP, 100.0, cell_size_m)
+                                if l_b: layers.append(l_b)
                                 
-                            if show_skunk and not df_map[df_map['skunk'] > 0].empty:
-                                layers.append(pdk.Layer(
-                                    'HeatmapLayer',
-                                    data=df_map[df_map['skunk'] > 0],
-                                    get_position='[lon, lat]',
-                                    get_weight='skunk',
-                                    opacity=0.6,
-                                    radiusPixels=heat_radius,
-                                    colorRange=[[242, 240, 247], [203, 201, 226], [158, 154, 200], [117, 107, 177], [84, 39, 143]] 
-                                ))
+                            if show_skunk:
+                                l_sk = interpolate_dense_grid(map_data, 'skunk', SKUNK_CMAP, 100.0, cell_size_m)
+                                if l_sk: layers.append(l_sk)
+                                
+                            if show_smoke:
+                                l_sm = interpolate_dense_grid(map_data, 'pm25', SMOKE_CMAP, 150.0, cell_size_m)
+                                if l_sm: layers.append(l_sm)
+                                
+                            if show_fog:
+                                l_fg = interpolate_dense_grid(map_data, 'fog_weight', FOG_CMAP, 100.0, cell_size_m)
+                                if l_fg: layers.append(l_fg)
 
-                            if show_smoke and not df_map[df_map['pm25'] > 0].empty:
-                                layers.append(pdk.Layer(
-                                    'HeatmapLayer',
-                                    data=df_map[df_map['pm25'] > 0],
-                                    get_position='[lon, lat]',
-                                    get_weight='pm25',
-                                    opacity=0.6,
-                                    radiusPixels=heat_radius,
-                                    colorRange=[[246, 232, 195], [223, 194, 125], [191, 129, 45], [140, 81, 10], [84, 48, 5]]
-                                ))
-
-                            if show_fog and not df_map[df_map['fog_weight'] > 0].empty:
-                                layers.append(pdk.Layer(
-                                    'HeatmapLayer',
-                                    data=df_map[df_map['fog_weight'] > 0],
-                                    get_position='[lon, lat]',
-                                    get_weight='fog_weight',
-                                    opacity=0.6,
-                                    radiusPixels=heat_radius,
-                                    colorRange=[[237, 248, 251], [178, 226, 226], [102, 194, 164], [44, 162, 95], [0, 109, 44]] 
-                                ))
-
+                            # --- THE VIGNETTE MASK ---
                             pad_lat = step / 2
                             pad_lon = step / 2
                             min_lon, max_lon = min(lons), max(lons)
@@ -536,6 +571,8 @@ if search_query:
                                 pickable=False
                             ))
 
+                            # --- THE INVISIBLE INTERACTIVE TOOLTIP LAYER ---
+                            r_mult = step / 0.08
                             layers.append(pdk.Layer(
                                 'ScatterplotLayer',
                                 data=df_map,
