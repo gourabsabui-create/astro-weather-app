@@ -127,7 +127,6 @@ def estimate_inversion_height(weather_data, idx):
         peak_temp = surface_temp
         peak_alt = 100
         
-        # 1. Find the absolute peak of the thermal inversion
         for alt, key in levels:
             t = safe_val(weather_data, key, idx)
             if t > peak_temp:
@@ -136,7 +135,6 @@ def estimate_inversion_height(weather_data, idx):
                 
         delta_t = round(peak_temp - surface_temp, 1)
         
-        # 2. Interpolate the exact ceiling (steepest gradient point)
         if delta_t > 0:
             lower_alt, lower_temp = 100, surface_temp
             for alt, key in levels:
@@ -338,7 +336,6 @@ if search_query:
                     inv_dt, inv_alt = estimate_inversion_height(base_data, baseline_idx)
                     if inv_dt > 0:
                         inv_alt_ft = round(inv_alt * 3.28084)
-                        # Re-structured to fit gracefully inside standard UI bounds
                         c3.metric("🌫️ FOG CEILING", f"{inv_alt} m", f"↑ {inv_alt_ft:,} ft | +{inv_dt}°C ΔT", delta_color="inverse")
                     else:
                         c3.metric("🌫️ FOG RISK", "Low", "No Inversion", delta_color="normal")
@@ -376,8 +373,15 @@ if search_query:
                     value="Regional (~90km)"
                 )
                 
+                # --- NEW INTERACTIVE TOGGLE ---
+                interactive_map = st.radio("Do you want an interactive map?", ["Yes (Zoom & Pan)", "No (Static Map)"], horizontal=True)
+                is_interactive = (interactive_map == "Yes (Zoom & Pan)")
+                
                 step_dict = {"Micro (~20km)": 0.02, "Local (~45km)": 0.04, "Regional (~90km)": 0.08, "Macro (~160km)": 0.15}
+                zoom_dict = {"Micro (~20km)": 9.5, "Local (~45km)": 8.5, "Regional (~90km)": 7.5, "Macro (~160km)": 6.5}
+                
                 step = step_dict[zoom_level]
+                map_zoom = zoom_dict[zoom_level]
                 r_mult = step / 0.08 
                 
                 c_b, c_sk, c_sm, c_f = st.columns(4)
@@ -495,7 +499,6 @@ if search_query:
                             pickable=True
                         ))
 
-                        # Re-structured, shorter tooltip to prevent screen clipping
                         tooltip_html = (
                             "<b>Coord:</b> {lat}, {lon}<br/>"
                             "<b>🔥 Burn:</b> {potential}/100 | <b>🦨 Skunk:</b> {skunk}%<br/>"
@@ -506,9 +509,11 @@ if search_query:
 
                         st.pydeck_chart(pdk.Deck(
                             map_style='dark',
+                            # Explicitly handle PyDeck mapping controllers based on the radio button
+                            views=[pdk.View(type="MapView", controller=is_interactive)],
                             initial_view_state=pdk.ViewState(
                                 latitude=lat, longitude=lon, 
-                                zoom=7.5 if zoom_level == "Regional (~90km)" else (9.5 if zoom_level == "Micro (~20km)" else 8.5), 
+                                zoom=map_zoom, 
                                 pitch=0
                             ),
                             layers=layers,
@@ -564,6 +569,11 @@ if search_query:
             
             # --- OFFLINE GC TRACKING UI (PHOTOPILLS 3D STYLE) ---
             st.write("### 🔭 Advanced Celestial Tracking Map")
+            
+            # ADDED STATIC TOGGLE TO ASTRO MAP AS WELL
+            interactive_astro = st.radio("Do you want an interactive map?", ["Yes (Zoom & Pan)", "No (Static Map)"], horizontal=True, key="astro_toggle")
+            is_astro_interactive = (interactive_astro == "Yes (Zoom & Pan)")
+            
             minute_offset = st.slider("Scrub Time (Granular Adjustment):", -360, 360, 0, 5, "%d mins")
             tracking_time = dt + timedelta(minutes=minute_offset)
             
@@ -604,6 +614,7 @@ if search_query:
 
             st.pydeck_chart(pdk.Deck(
                 map_style=bg_style,
+                views=[pdk.View(type="MapView", controller=is_astro_interactive)],
                 initial_view_state=pdk.ViewState(latitude=lat, longitude=lon, zoom=8.5, pitch=45, bearing=0),
                 layers=[
                     pdk.Layer('LineLayer', data=pd.DataFrame(line_data) if line_data else pd.DataFrame(columns=["start_lon", "start_lat", "end_lon", "end_lat", "color"]), get_source_position='[start_lon, start_lat]', get_target_position='[end_lon, end_lat]', get_color='color', get_width=300),
