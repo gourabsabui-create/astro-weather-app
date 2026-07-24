@@ -17,7 +17,7 @@ WAQI_TOKEN = "demo" # Replace with a free token from aqicn.org if you hit rate l
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_geocoding(query):
     try:
-        return requests.get(f"https://geocoding-api.open-meteo.com/v1/search?name={query}&count=5", timeout=5).json()
+        return requests.get(f"https://geocoding-api.open-meteo.com/v1/search?name={query}&count=10", timeout=5).json()
     except:
         return None
 
