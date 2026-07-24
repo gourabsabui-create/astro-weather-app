@@ -285,6 +285,39 @@ def get_celestial_az_alt(lat, lon, local_time, tz_string, target="galactic_core"
     if math.sin(ha_rad) > 0: az = 2 * math.pi - az
     return math.degrees(az), math.degrees(alt)
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def calculate_celestial_events(lat, lon, date_str, tz_string):
+    """Scans the entire selected day in 2-minute increments to find exact twilight, sunrise, and moonset times."""
+    target_date = datetime.fromisoformat(date_str).date()
+    base_dt = datetime.combine(target_date, time(0, 0))
+    events = {}
+    prev_sun_alt = None
+    prev_moon_alt = None
+    
+    for m in range(0, 1440, 2):
+        dt = base_dt + timedelta(minutes=m)
+        _, s_alt = get_celestial_az_alt(lat, lon, dt, tz_string, "sun")
+        _, m_alt = get_celestial_az_alt(lat, lon, dt, tz_string, "moon")
+        
+        if prev_sun_alt is not None:
+            if prev_sun_alt < 0 and s_alt >= 0: events['Sunrise'] = dt
+            if prev_sun_alt > 0 and s_alt <= 0: events['Sunset'] = dt
+            if prev_sun_alt < -6 and s_alt >= -6: events['Dawn (Civil)'] = dt
+            if prev_sun_alt > -6 and s_alt <= -6: events['Dusk (Civil)'] = dt
+            if prev_sun_alt < -12 and s_alt >= -12: events['Dawn (Nautical)'] = dt
+            if prev_sun_alt > -12 and s_alt <= -12: events['Dusk (Nautical)'] = dt
+            if prev_sun_alt < -18 and s_alt >= -18: events['Dawn (Astro)'] = dt
+            if prev_sun_alt > -18 and s_alt <= -18: events['Dusk (Astro)'] = dt
+            
+        if prev_moon_alt is not None:
+            if prev_moon_alt < 0 and m_alt >= 0: events['Moonrise'] = dt
+            if prev_moon_alt > 0 and m_alt <= 0: events['Moonset'] = dt
+            
+        prev_sun_alt = s_alt
+        prev_moon_alt = m_alt
+        
+    return events
+
 def create_vector_line(lat, lon, azimuth, length_deg, color):
     end_lat = lat + length_deg * math.cos(math.radians(azimuth))
     end_lon = lon + length_deg * math.sin(math.radians(azimuth)) / math.cos(math.radians(lat))
@@ -292,7 +325,7 @@ def create_vector_line(lat, lon, azimuth, length_deg, color):
 
 # --- APP START ---
 mode = st.radio("Select Dashboard Mode:", ["🌅 Sunrise & Sunset", "🌌 Astrophotography"], horizontal=True)
-search_query = st.text_input("Enter a location (e.g., Jasper, Banff, Yosemite):", "Lake Louise")
+search_query = st.text_input("Enter a location (e.g., Jasper, Banff, Yosemite):", "Lake Louise, Alberta, Canada")
 
 if search_query:
     with st.spinner(f"Locating {search_query}..."):
@@ -322,7 +355,6 @@ if search_query:
             
             tide_data = fetch_tides(lat, lon, STORMGLASS_TOKEN) if fetch_tides_toggle else None
             
-            # --- TIMEZONE FIX EXCLUSIVELY HAPPENS HERE ---
             real_tz = base_data.get("timezone", "UTC") if base_data else "UTC"
 
         st.divider()
@@ -706,13 +738,49 @@ if search_query:
         # ==========================================
         elif mode == "🌌 Astrophotography":
             st.write("### 🕒 Astro Planning Window")
-            c1, c2 = st.columns(2)
-            selected_date = c1.date_input("Target Date:", datetime.today().date())
-            selected_time = c2.time_input("Target Time (Local):", time(0, 0))
             
-            dt = datetime.combine(selected_date, selected_time)
-            closest_hour_str = dt.replace(minute=0, second=0, microsecond=0).strftime("%Y-%m-%dT%H:00")
+            selected_date = st.date_input("Target Date:", datetime.today().date())
+            
+            # --- EXACT TIME SLIDER LOGIC ---
+            start_of_day = datetime.combine(selected_date, time(0, 0))
+            end_of_day = datetime.combine(selected_date, time(23, 59))
+            
+            if selected_date == datetime.today().date():
+                default_time = datetime.now().replace(second=0, microsecond=0)
+            else:
+                default_time = datetime.combine(selected_date, time(12, 0))
+                
+            tracking_time = st.slider(
+                "Select Exact Time (Local):",
+                min_value=start_of_day,
+                max_value=end_of_day,
+                value=default_time,
+                step=timedelta(minutes=1),
+                format="hh:mm A"
+            )
+            
+            closest_hour_str = tracking_time.replace(minute=0, second=0, microsecond=0).strftime("%Y-%m-%dT%H:00")
             hourly_times = base_data.get("hourly", {}).get("time", []) if base_data else []
+
+            # --- CELESTIAL DAILY MILESTONES ---
+            st.subheader("⏱️ Daily Celestial Events")
+            with st.spinner("Calculating exact horizon crossings..."):
+                events = calculate_celestial_events(lat, lon, selected_date.isoformat(), real_tz)
+                
+            e1, e2, e3, e4 = st.columns(4)
+            e1.markdown(f"**Sunrise:** {events.get('Sunrise', 'N/A').strftime('%I:%M %p') if 'Sunrise' in events else 'N/A'}")
+            e1.markdown(f"**Sunset:** {events.get('Sunset', 'N/A').strftime('%I:%M %p') if 'Sunset' in events else 'N/A'}")
+            
+            e2.markdown(f"**Dawn (Civil):** {events.get('Dawn (Civil)', 'N/A').strftime('%I:%M %p') if 'Dawn (Civil)' in events else 'N/A'}")
+            e2.markdown(f"**Dusk (Civil):** {events.get('Dusk (Civil)', 'N/A').strftime('%I:%M %p') if 'Dusk (Civil)' in events else 'N/A'}")
+            
+            e3.markdown(f"**Dawn (Nautical):** {events.get('Dawn (Nautical)', 'N/A').strftime('%I:%M %p') if 'Dawn (Nautical)' in events else 'N/A'}")
+            e3.markdown(f"**Dusk (Nautical):** {events.get('Dusk (Nautical)', 'N/A').strftime('%I:%M %p') if 'Dusk (Nautical)' in events else 'N/A'}")
+            
+            e4.markdown(f"**Moonrise:** {events.get('Moonrise', 'N/A').strftime('%I:%M %p') if 'Moonrise' in events else 'N/A'}")
+            e4.markdown(f"**Moonset:** {events.get('Moonset', 'N/A').strftime('%I:%M %p') if 'Moonset' in events else 'N/A'}")
+
+            st.divider()
 
             st.subheader("🌌 Milky Way & Night Sky Analysis")
             
@@ -754,7 +822,7 @@ if search_query:
                 st.info("💡 **Tide Tracker Inactive:** To track high/low tide times for coastal reflections and sea stacks, replace `STORMGLASS_TOKEN` at the top of the script with a free API key from stormglass.io.")
             elif isinstance(tide_data, list) and len(tide_data) > 0:
                 
-                target_dt = pd.Timestamp(dt)
+                target_dt = pd.Timestamp(tracking_time)
                 if target_dt.tzinfo is None:
                     target_dt = target_dt.tz_localize(real_tz)
                 else:
@@ -808,17 +876,29 @@ if search_query:
             interactive_astro = st.radio("Do you want an interactive map?", ["Yes (Zoom & Pan)", "No (Static Map)"], horizontal=True, key="astro_toggle")
             is_astro_interactive = (interactive_astro == "Yes (Zoom & Pan)")
             
-            minute_offset = st.slider("Scrub Time (Granular Adjustment):", -360, 360, 0, 5, "%d mins")
-            tracking_time = dt + timedelta(minutes=minute_offset)
-            
             gc_az, gc_alt = get_celestial_az_alt(lat, lon, tracking_time, real_tz, "galactic_core")
             sun_az, sun_alt = get_celestial_az_alt(lat, lon, tracking_time, real_tz, "sun")
             moon_az, moon_alt = get_celestial_az_alt(lat, lon, tracking_time, real_tz, "moon")
             
-            if sun_alt > 0: bg_style, sky_status = 'light', "☀️ Daytime (Light Map)"
-            elif sun_alt > -6: bg_style, sky_status = 'dark', "🌇 Civil Twilight (Golden/Blue Hour)"
-            elif sun_alt > -12: bg_style, sky_status = 'dark', "🌆 Nautical Twilight (Stars Emerging)"
-            else: bg_style, sky_status = 'dark', "🌌 True Night (Dark Map)"
+            # --- DYNAMIC PHOTOPILLS COLOR WASH OVERLAY ---
+            if sun_alt > 6: 
+                wash_color = [255, 240, 200, 25]  
+                sky_status = "☀️ Daytime (Yellow)"
+            elif sun_alt > 0: 
+                wash_color = [255, 140, 0, 45]   
+                sky_status = "🌇 Golden Hour (Orange)"
+            elif sun_alt > -6: 
+                wash_color = [100, 150, 255, 50] 
+                sky_status = "🌆 Blue Hour / Civil Twilight"
+            elif sun_alt > -12: 
+                wash_color = [20, 50, 150, 80]  
+                sky_status = "🌌 Nautical Twilight"
+            elif sun_alt > -18:
+                wash_color = [0, 10, 50, 100]
+                sky_status = "🌌 Astronomical Twilight"
+            else: 
+                wash_color = [0, 0, 20, 140]     
+                sky_status = "🌃 True Night"
 
             st.write(f"**Target Time:** {tracking_time.strftime('%A, %I:%M %p')}")
             c_a, c_b, c_c = st.columns(3)
@@ -853,13 +933,25 @@ if search_query:
                     latitude=lat, longitude=lon, zoom=8.5, pitch=45, bearing=0,
                     min_zoom=8.5, max_zoom=8.5
                 )
+                
+            wash_layer = pdk.Layer(
+                'PolygonLayer',
+                data=pd.DataFrame([{"polygon": [[-180, 90], [180, 90], [180, -90], [-180, -90]], "color": wash_color}]),
+                get_polygon='polygon',
+                get_fill_color='color',
+                filled=True,
+                stroked=False,
+                pickable=False
+            )
 
             st.pydeck_chart(pdk.Deck(
-                map_style=bg_style,
+                map_style='light', # Forced to light map so the custom wash layer properly dictates the tint
                 views=[pdk.View(type="MapView", controller=is_astro_interactive)],
                 initial_view_state=astro_view,
                 layers=[
-                    pdk.Layer('LineLayer', data=pd.DataFrame(line_data) if line_data else pd.DataFrame(columns=["start_lon", "start_lat", "end_lon", "end_lat", "color"]), get_source_position='[start_lon, start_lat]', get_target_position='[end_lon, end_lat]', get_color='color', get_width=300),
+                    wash_layer,
+                    # THE FIX: width_units="pixels" stops PyDeck from inflating the line to 300 geographical meters!
+                    pdk.Layer('LineLayer', data=pd.DataFrame(line_data) if line_data else pd.DataFrame(columns=["start_lon", "start_lat", "end_lon", "end_lat", "color"]), get_source_position='[start_lon, start_lat]', get_target_position='[end_lon, end_lat]', get_color='color', get_width=3, width_units='"pixels"'),
                     pdk.Layer('ScatterplotLayer', data=pd.DataFrame(dot_data), get_position='[lon, lat]', get_color='color', get_radius='radius', pickable=False)
                 ]
             ))
