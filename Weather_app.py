@@ -37,7 +37,6 @@ def save_location_to_cache(name, lat, lon, tz):
         pass
 
 # --- DYNAMIC STREAMLIT CUSTOM COMPONENT (GPS SENSOR) ---
-# This safely bridges JavaScript hardware GPS directly into Python variables without URL hacks
 def build_gps_component():
     if not os.path.exists("gps_component"):
         os.mkdir("gps_component")
@@ -430,7 +429,6 @@ with st.sidebar:
     elif input_method == "🛰️ Live GPS Sensor":
         st.info("Tap below to activate your phone's hardware GPS. It will automatically detect your coordinates and feed them to the app.")
         
-        # The custom component automatically returns a dictionary when setComponentValue is called in JS
         gps_data = gps_locator()
         
         if gps_data:
@@ -438,7 +436,6 @@ with st.sidebar:
             lon = float(gps_data["lon"])
             tz = "auto"
             st.success(f"✅ GPS Lock Acquired: {lat}, {lon}")
-            # Automatically log the GPS coordinates into the saved spots directory
             save_location_to_cache(f"GPS Spot ({lat}, {lon})", lat, lon, tz)
         
     st.divider()
@@ -456,6 +453,21 @@ else:
         live_aqi, live_station = fetch_waqi_live(lat, lon)
         tide_data = fetch_tides(lat, lon, STORMGLASS_TOKEN) if fetch_tides_toggle else None
         real_tz = base_data.get("timezone", tz) if base_data else (tz if tz != "auto" else "UTC")
+
+    # --- DYNAMIC TARGET PIN LAYER ---
+    target_pin_layer = pdk.Layer(
+        'ScatterplotLayer',
+        data=pd.DataFrame([{"lat": lat, "lon": lon}]),
+        get_position='[lon, lat]',
+        get_fill_color=[255, 50, 50, 255],
+        get_line_color=[255, 255, 255, 255],
+        stroked=True,
+        line_width_min_pixels=3,
+        get_radius=100,
+        radius_min_pixels=7,
+        radius_max_pixels=15,
+        pickable=False
+    )
 
     # ==========================================
     # MODE 1: SUNRISE & SUNSET
@@ -623,6 +635,8 @@ else:
                         mask_data = [{"polygon": [[[-180, 90], [180, 90], [180, -90], [-180, -90]], [[min_lon - pad_lon, min_lat - pad_lat], [max_lon + pad_lon, min_lat - pad_lat], [max_lon + pad_lon, max_lat + pad_lat], [min_lon - pad_lon, max_lat + pad_lat]]]}]
                         layers.append(pdk.Layer('PolygonLayer', data=mask_data, get_polygon='polygon', get_fill_color=[22, 25, 28, 230], filled=True, stroked=True, get_line_color=[150, 150, 150, 150], line_width_min_pixels=2, pickable=False))
                         layers.append(pdk.Layer('ScatterplotLayer', data=df_map, get_position='[lon, lat]', get_color=[0, 0, 0, 0], get_radius=5000 * (step / 0.08), pickable=True))
+                        
+                        layers.append(target_pin_layer)
 
                         tooltip_html = "<b>Coord:</b> {lat}, {lon}<br/><b>🔥 Burn:</b> {potential}/100 | <b>🦨 Skunk:</b> {skunk}%<br/><b>🌲 Smoke:</b> {pm25} µg/m³<br/><b>☁️ Clouds:</b> {cloud_low}% L | {cloud_mid}% M | {cloud_high}% H<br/><b>🌫️ Fog Ceiling:</b> {fog_text}"
                         st.pydeck_chart(pdk.Deck(map_style='dark', views=[pdk.View(type="MapView", controller=is_interactive)], initial_view_state=v_state, layers=layers, tooltip={"html": tooltip_html, "style": {"backgroundColor": "#222222", "color": "white"}}))
@@ -747,7 +761,7 @@ else:
             astro_view = pdk.ViewState(latitude=lat, longitude=lon, zoom=8.5, pitch=45, bearing=0) if interactive_astro == "Yes (Zoom & Pan)" else pdk.ViewState(latitude=lat, longitude=lon, zoom=8.5, pitch=45, bearing=0, min_zoom=8.5, max_zoom=8.5)
             wash_layer = pdk.Layer('PolygonLayer', data=pd.DataFrame([{"polygon": [[-180, 90], [180, 90], [180, -90], [-180, -90]], "color": wash_color}]), get_polygon='polygon', get_fill_color='color', filled=True, stroked=False, pickable=False)
 
-            st.pydeck_chart(pdk.Deck(map_style='light', views=[pdk.View(type="MapView", controller=(interactive_astro == "Yes (Zoom & Pan)"))], initial_view_state=astro_view, layers=[wash_layer, pdk.Layer('LineLayer', data=pd.DataFrame(line_data) if line_data else pd.DataFrame(columns=["start_lon", "start_lat", "end_lon", "end_lat", "color"]), get_source_position='[start_lon, start_lat]', get_target_position='[end_lon, end_lat]', get_color='color', get_width=3, width_units='"pixels"'), pdk.Layer('ScatterplotLayer', data=pd.DataFrame(dot_data), get_position='[lon, lat]', get_color='color', get_radius='radius', pickable=False)]))
+            st.pydeck_chart(pdk.Deck(map_style='light', views=[pdk.View(type="MapView", controller=(interactive_astro == "Yes (Zoom & Pan)"))], initial_view_state=astro_view, layers=[wash_layer, pdk.Layer('LineLayer', data=pd.DataFrame(line_data) if line_data else pd.DataFrame(columns=["start_lon", "start_lat", "end_lon", "end_lat", "color"]), get_source_position='[start_lon, start_lat]', get_target_position='[end_lon, end_lat]', get_color='color', get_width=3, width_units='"pixels"'), pdk.Layer('ScatterplotLayer', data=pd.DataFrame(dot_data), get_position='[lon, lat]', get_color='color', get_radius='radius', pickable=False), target_pin_layer]))
             st.caption("🟠 Sun Direction | ⚪ Moon Direction | 🟣/🟡 Milky Way Core")
 
         with tab_events:
